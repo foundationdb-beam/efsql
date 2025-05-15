@@ -13,6 +13,20 @@ mix run efsql.exs -C ../path/to/etc/fdb.cluster
 
 The default cluster file is chosen using the same logic as [fdbcli's default cluster file](https://apple.github.io/foundationdb/administration.html#default-cluster-file).
 
+```
+~/d/efsql ❯❯❯ ./dev-efsql                                                                                                                                                ✘ 126
+Compiling 1 file (.ex)
+Generated efsql app
+[cluster_file: "../path/to/etc/fdb.cluster"]
+> select id, inserted_at from my_tenant_id.my_table_name;
+
+  ┌─────────────────┬─────────────────────┐
+  │ Id              │ Inserted At         │
+  ├─────────────────┼─────────────────────┤
+  │ trmD6RQjbPTQmMD │ 2025-05-15 22:35:38 │
+  └─────────────────┴─────────────────────┘
+```
+
 ## escript?
 
 Sadly, it's not possible to have a self-contained escript at this time because of the erlfdb NIF.
