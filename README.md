@@ -14,9 +14,7 @@ mix run efsql.exs -C ../path/to/etc/fdb.cluster
 The default cluster file is chosen using the same logic as [fdbcli's default cluster file](https://apple.github.io/foundationdb/administration.html#default-cluster-file).
 
 ```
-~/d/efsql ❯❯❯ ./dev-efsql                                                                                                                                                ✘ 126
-Compiling 1 file (.ex)
-Generated efsql app
+~/d/efsql ❯❯❯ mix run efsql.exs -C ../path/to/etc/fdb.cluster
 [cluster_file: "../path/to/etc/fdb.cluster"]
 > select id, inserted_at from my_tenant_id.my_table_name;
 
