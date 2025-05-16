@@ -4,9 +4,8 @@ defmodule Efsql.QuerySplitter do
   # pk Equal
   def partition(
         query = %Ecto.Query{
-          from: %Ecto.Query.FromExpr{source: {source, _schema}},
           wheres: [
-            bool_expr = %Ecto.Query.BooleanExpr{
+            %Ecto.Query.BooleanExpr{
               op: :and,
               expr: {:==, [], [{{:., [], [{:&, [], [0]}, :_]}, [], []}, id]}
             }
@@ -30,7 +29,7 @@ defmodule Efsql.QuerySplitter do
   def partition(
         query = %Ecto.Query{
           wheres: [
-            bool_expr = %Ecto.Query.BooleanExpr{
+            %Ecto.Query.BooleanExpr{
               op: :and,
               expr:
                 {{lhs, [], [{{:., [], [{:&, [], [0]}, :_]}, [], []}, id_a]},

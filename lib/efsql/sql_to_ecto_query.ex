@@ -126,10 +126,26 @@ defmodule Efsql.SqlToEctoQuery do
     Enum.reverse(acc)
   end
 
-  defp where_tokens_to_wheres([op_token = {operator, _meta, [_lhs, _rhs]} | rest], acc)
-       when operator in ~w[= >= <= > < !=]a do
+  defp where_tokens_to_wheres(
+         [{:primary, _meta0, []}, {:key, meta1, []}, {operator, meta2, []}, rhs | rest],
+         acc
+       )
+       when operator in ~w[= > < >= <=]a do
+    lhs = {:ident, meta1, [:_]}
+    op_token = {operator, meta2, [lhs, rhs]}
     expr = operator_to_where_expr(op_token)
     acc = merge_operator_head(expr, acc)
+    where_tokens_to_wheres(rest, acc)
+  end
+
+  defp where_tokens_to_wheres([op_token = {operator, _meta, [_lhs, _rhs]} | rest], acc)
+       when operator in ~w[= >= <= > <]a do
+    expr = operator_to_where_expr(op_token)
+    acc = merge_operator_head(expr, acc)
+    where_tokens_to_wheres(rest, acc)
+  end
+
+  defp where_tokens_to_wheres([{:and, _meta, []} | rest], acc) do
     where_tokens_to_wheres(rest, acc)
   end
 
@@ -191,10 +207,6 @@ defmodule Efsql.SqlToEctoQuery do
       params: [],
       subqueries: []
     }
-  end
-
-  defp field_name_select_expr(atom_field) do
-    {:{}, [], [atom_field, {{:., [], [{:&, [], [0]}, atom_field]}, [], []}]}
   end
 
   defp to_atom(atom) when is_atom(atom), do: atom

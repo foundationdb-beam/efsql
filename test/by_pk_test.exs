@@ -1,7 +1,9 @@
 defmodule EfsqlTest.Integration.SelectByPk do
   use EfsqlTest.Case, async: true
 
-  # Querying primary key always uses _ identifier because we don't know what the primary key field is without the Schema
+  # Querying primary key via
+  # 1. _ identifier
+  # 2. 'primary key' keywords
 
   test "select by pk equals", context do
     tenant_id = context[:tenant_id]
@@ -21,7 +23,7 @@ defmodule EfsqlTest.Integration.SelectByPk do
              [id: "0002", name: "Bob", notes: "foobar"]
            ] =
              Efsql.all(
-               "select id, name, notes from #{tenant_id}.users where _ >= '0001' and _ <= '0002';"
+               "select id, name, notes from #{tenant_id}.users where primary key >= '0001' and primary key <= '0002';"
              )
              |> Enum.map(&Map.to_list/1)
   end

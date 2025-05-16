@@ -23,7 +23,6 @@ defmodule Efsql do
 
     case Efsql.QuerySplitter.partition(query) do
       {:all_range, {query1, id_a, id_b, options}, _query2} ->
-        IO.inspect(query1 |> Map.drop([:__struct__]), label: "q")
         Efsql.Repo.all_range(query1, id_a, id_b, options)
 
       {:all, query1, _query2} ->
