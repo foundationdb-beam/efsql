@@ -2,7 +2,7 @@ defmodule Efsql.QueryHelper do
   def get_select_fields(query) do
     %Ecto.Query{
       select: %Ecto.Query.SelectExpr{
-        fields: fields
+        take: %{0 => {:any, fields}}
       }
     } = query
 

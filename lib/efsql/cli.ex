@@ -85,6 +85,7 @@ defmodule Efsql.Cli do
     Table.start(fields)
 
     stream
+    |> Stream.map(&Map.to_list/1)
     |> Stream.chunk_every(10)
     |> Stream.each(&Table.format(&1, style: :light))
     |> Stream.run()
