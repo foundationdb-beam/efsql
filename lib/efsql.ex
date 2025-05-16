@@ -1,9 +1,34 @@
 defmodule Efsql do
   import Ecto.Query
 
+  def hello() do
+    tenant = EctoFoundationDB.Tenant.open!(Efsql.Repo, "localhost")
+
+    query = from(s in "secrets", select: [id: s.id, iv: s.iv])
+    # IO.inspect(Map.drop(query, [:__struct__]))
+    r1 = Efsql.Repo.all(query, prefix: tenant)
+
+    query2 =
+      sql_to_ecto_query("""
+      select id, iv from localhost.secrets;
+      """)
+
+    r2 = Efsql.Repo.all(query2)
+
+    {r1, r2}
+  end
+
   def all(sql) do
     query = sql_to_ecto_query(sql)
-    Efsql.Repo.all(query)
+
+    case Efsql.QuerySplitter.partition(query) do
+      {:all_range, {query1, id_a, id_b, options}, _query2} ->
+        IO.inspect(query1 |> Map.drop([:__struct__]), label: "q")
+        Efsql.Repo.all_range(query1, id_a, id_b, options)
+
+      {:all, query1, _query2} ->
+        Efsql.Repo.all(query1)
+    end
   end
 
   def stream(sql) do

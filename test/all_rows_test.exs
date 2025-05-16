@@ -10,6 +10,7 @@ defmodule EfsqlTest.Integration.SelectAllRows do
              [id: "0003"]
            ] =
              Efsql.all("select id from #{tenant_id}.users;")
+             |> Enum.map(&Map.to_list/1)
   end
 
   test "select with double-quote tenant id", context do
@@ -23,6 +24,7 @@ defmodule EfsqlTest.Integration.SelectAllRows do
              Efsql.all("""
              select id from "#{tenant_id}".users;
              """)
+             |> Enum.map(&Map.to_list/1)
   end
 
   test "select name column", context do
@@ -34,6 +36,7 @@ defmodule EfsqlTest.Integration.SelectAllRows do
              [id: "0003", name: "Charles"]
            ] =
              Efsql.all("select id, name from #{tenant_id}.users;")
+             |> Enum.map(&Map.to_list/1)
   end
 
   test "select 3 columns", context do
@@ -45,5 +48,6 @@ defmodule EfsqlTest.Integration.SelectAllRows do
              [id: "0003", name: "Charles", notes: nil]
            ] =
              Efsql.all("select id, name, notes from #{tenant_id}.users;")
+             |> Enum.map(&Map.to_list/1)
   end
 end

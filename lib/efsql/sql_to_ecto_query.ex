@@ -15,17 +15,16 @@ defmodule Efsql.SqlToEctoQuery do
 
   defp token_to_ecto_query({:select, meta, tokens}, query) do
     field_names = select_tokens_to_expr(tokens, [])
-    expr = for field <- field_names, do: field_name_select_expr(field)
 
     %Ecto.Query{
       query
       | select: %Ecto.Query.SelectExpr{
-          expr: expr,
+          expr: {:&, [], [0]},
           file: meta[:file],
           line: meta[:line],
-          fields: field_names,
+          fields: nil,
           params: [],
-          take: %{},
+          take: %{0 => {:any, field_names}},
           subqueries: [],
           aliases: %{}
         }
