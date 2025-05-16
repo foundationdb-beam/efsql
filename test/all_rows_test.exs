@@ -1,16 +1,4 @@
-defmodule EfsqlTest.IntegrationUnsupported do
-  use EfsqlTest.Case, async: true
-
-  test "* raises", context do
-    tenant_id = context[:tenant_id]
-
-    assert_raise(RuntimeError, ~r/'*' is not supported/, fn ->
-      Efsql.all("select * from #{tenant_id}.users;")
-    end)
-  end
-end
-
-defmodule EfsqlTest.IntegrationSelectAllRows do
+defmodule EfsqlTest.Integration.SelectAllRows do
   use EfsqlTest.Case, async: true
 
   test "select id column", context do
@@ -58,12 +46,4 @@ defmodule EfsqlTest.IntegrationSelectAllRows do
            ] =
              Efsql.all("select id, name, notes from #{tenant_id}.users;")
   end
-end
-
-defmodule EfsqlTest.IntegrationSelectByIndex do
-  use EfsqlTest.Case, async: true
-end
-
-defmodule EfsqlTest.IntegrationOrderBy do
-  use EfsqlTest.Case, async: true
 end

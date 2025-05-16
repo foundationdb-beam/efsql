@@ -26,8 +26,8 @@ defmodule Efsql.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:ecto_foundationdb, github: "foundationdb-beam/ecto_foundationdb"},
-      {:sql, "~> 0.2"},
+      {:ecto_foundationdb, path: "../ecto_foundationdb"},
+      {:sql, github: "elixir-dbvisor/sql"},
       {:io_ansi_table, "~> 1.0"}
     ]
   end
