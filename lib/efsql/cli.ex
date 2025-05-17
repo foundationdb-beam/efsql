@@ -66,7 +66,7 @@ defmodule Efsql.Cli do
     end
   end
 
-  defp init_ecto_foundationdb!(args) do
+  def init_ecto_foundationdb!(args) do
     cluster_file = get_cluster_file(args)
     storage_id = get_storage_id(args)
 

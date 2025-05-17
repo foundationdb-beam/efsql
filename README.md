@@ -45,20 +45,23 @@ Use a readline-wrapper, such as rlwrap, to enable command history:
 ### Select row with primary key
 
     select col_a, col_b from tenant_id.schema_name where primary key = 'foobar';
-
-Alternate
-
-    select col_a, col_b from tenant_id.schema_name where _ = 'foobar';
-
-### Select rows with primary key inequality
-
     select col_a, col_b from tenant_id.schema_name where primary key >= 'bar' and primary key < 'foo';
     select col_a, col_b from tenant_id.schema_name where primary key > 'bar';
     select col_a, col_b from tenant_id.schema_name where primary key < 'foo';
 
 Alternate
 
-    select col_a, col_b from tenant_id.schema_name where _ > 'bar' and _ < 'foo';
+    select col_a, col_b from tenant_id.schema_name where _ = 'foobar';
+
+### Select rows with index
+
+    select col_a, col_b from tenant_id.schema_name where index_col = 'baz';
+    select col_a, col_b from tenant_id.schema_name where index_col >= 'baz' and index_col < 'zaz';
+
+See EctoFoundationDB's Default indexes. Since we don't require access to the Ecto.Schema, and
+EctoFDB doesn't store the schema in the database, we loosen the type checking for these queries.
+For example, if the indexed column is a naive_datetime, then you must query using the string
+representation for the timestamp.
 
 ## escript?
 
