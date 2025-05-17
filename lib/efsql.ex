@@ -18,16 +18,24 @@ defmodule Efsql do
     {r1, r2}
   end
 
-  def all(sql) do
+  def all(sql, options \\ []) do
+    {_, result} = qall(sql, options)
+    result
+  end
+
+  def qall(sql, options \\ []) do
     query = sql_to_ecto_query(sql)
 
-    case Efsql.QuerySplitter.partition(query) do
-      {:all_range, {query1, id_a, id_b, options}, _query2} ->
-        Efsql.Repo.all_range(query1, id_a, id_b, options)
+    result =
+      case Efsql.QuerySplitter.partition(query, options) do
+        {:all_range, {query1, id_a, id_b, options}, _query2} ->
+          Efsql.Repo.all_range(query1, id_a, id_b, options)
 
-      {:all, query1, _query2} ->
-        Efsql.Repo.all(query1)
-    end
+        {:all, {query1, options}, _query2} ->
+          Efsql.Repo.all(query1, options)
+      end
+
+    {query, result}
   end
 
   def stream(sql) do

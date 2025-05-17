@@ -15,7 +15,7 @@ defmodule EfsqlTest.Integration.SelectByPk do
              |> Enum.map(&Map.to_list/1)
   end
 
-  test "select by pk between", context do
+  test "select by pk between inclusive", context do
     tenant_id = context[:tenant_id]
 
     assert [
@@ -24,6 +24,18 @@ defmodule EfsqlTest.Integration.SelectByPk do
            ] =
              Efsql.all(
                "select id, name, notes from #{tenant_id}.users where primary key >= '0001' and primary key <= '0002';"
+             )
+             |> Enum.map(&Map.to_list/1)
+  end
+
+  test "select by pk between exclusive", context do
+    tenant_id = context[:tenant_id]
+
+    assert [
+             [id: "0002", name: "Bob", notes: "foobar"]
+           ] =
+             Efsql.all(
+               "select id, name, notes from #{tenant_id}.users where primary key > '0001' and primary key < '0003';"
              )
              |> Enum.map(&Map.to_list/1)
   end

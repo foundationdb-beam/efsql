@@ -13,9 +13,10 @@ mix run efsql.exs -C ../path/to/etc/fdb.cluster
 
 The default cluster file is chosen using the same logic as [fdbcli's default cluster file](https://apple.github.io/foundationdb/administration.html#default-cluster-file).
 
-```
+```bash
 ~/d/efsql ❯❯❯ mix run efsql.exs -C ../path/to/etc/fdb.cluster
-[cluster_file: "../path/to/etc/fdb.cluster"]
+Connected to ../path/to/etc/fdb.cluster
+[Ctrl+D to exit]
 > select id, inserted_at from my_tenant_id.my_table_name;
 
   ┌─────────────────┬─────────────────────┐
@@ -24,6 +25,39 @@ The default cluster file is chosen using the same logic as [fdbcli's default clu
   │ trmD6RQjbPTQmMD │ 2025-05-15 22:35:38 │
   └─────────────────┴─────────────────────┘
 ```
+
+Use a readline-wrapper, such as rlwrap, to enable command history:
+
+```bash
+# Enable history and navigation
+~/d/efsql ❯❯❯ rlwrap mix run efsql.exs
+
+# Some other helpful options
+~/d/efsql ❯❯❯ rlwrap -ra -pgreen -f completions mix run efsql.exs
+```
+
+## Supported SQL
+
+### Select rows
+
+    select col_a, col_b from tenant_id.schema_name;
+
+### Select row with primary key
+
+    select col_a, col_b from tenant_id.schema_name where primary key = 'foobar';
+
+Alternate
+
+    select col_a, col_b from tenant_id.schema_name where _ = 'foobar';
+
+### Select rows with primary key range
+(inclusive and exclusive inequalities are supported)
+
+    select col_a, col_b from tenant_id.schema_name where primary key >= 'bar' and primary key < 'foo';
+
+Alternate
+
+    select col_a, col_b from tenant_id.schema_name where _ > 'bar' and _ < 'foo';
 
 ## escript?
 

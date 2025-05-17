@@ -11,7 +11,8 @@ defmodule Efsql.QuerySplitter do
             }
             | rest
           ]
-        }
+        },
+        options
       ) do
     query1 = %Ecto.Query{query | wheres: []}
     query2 = %Ecto.Query{query | wheres: rest}
@@ -22,7 +23,9 @@ defmodule Efsql.QuerySplitter do
       """
     end
 
-    {:all_range, {query1, id, id, [inclusive_left?: true, inclusive_right?: true]}, query2}
+    options = Keyword.merge(options, inclusive_left?: true, inclusive_right?: true)
+
+    {:all_range, {query1, id, id, options}, query2}
   end
 
   # pk Between
@@ -37,7 +40,8 @@ defmodule Efsql.QuerySplitter do
             }
             | rest
           ]
-        }
+        },
+        options
       )
       when lhs in ~w[> >=]a and rhs in ~w[< <=]a do
     query1 = %Ecto.Query{query | wheres: []}
@@ -49,15 +53,16 @@ defmodule Efsql.QuerySplitter do
       """
     end
 
-    options = []
-    options = if lhs == :>, do: options ++ [inclusive_left?: false], else: options
-    options = if rhs == :<=, do: options ++ [inclusive_right?: true], else: options
+    options1 = []
+    options1 = if lhs == :>, do: options1 ++ [inclusive_left?: false], else: options1
+    options1 = if rhs == :<=, do: options1 ++ [inclusive_right?: true], else: options1
+    options = Keyword.merge(options, options1)
 
     {:all_range, {query1, id_a, id_b, options}, query2}
   end
 
   # all others
-  def partition(query) do
-    {:all, query, query}
+  def partition(query, options) do
+    {:all, {query, options}, query}
   end
 end

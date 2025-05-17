@@ -2,6 +2,10 @@ defmodule Efsql.Cli do
   alias IO.ANSI.Table
   alias Efsql.QueryHelper
 
+  defstruct args: [], history: []
+
+  use GenServer
+
   def main(args) do
     {args, _, _} =
       OptionParser.parse(args,
@@ -11,29 +15,52 @@ defmodule Efsql.Cli do
 
     init_ecto_foundationdb!(args)
 
-    loop(args)
+    {:ok, pid} = GenServer.start_link(__MODULE__, args)
+    mref = Process.monitor(pid)
+    wait_for_down(pid, mref)
   end
 
-  def loop(args) do
+  defp wait_for_down(pid, mref) do
+    receive do
+      {:DOWN, ^mref, :process, ^pid, :normal} ->
+        :ok
+
+      {:DOWN, ^mref, :process, ^pid, reason} ->
+        {:error, reason}
+    end
+  end
+
+  @impl true
+  def init(args) do
+    IO.puts("[Ctrl+D to exit]")
+    GenServer.cast(self(), :prompt_for_input)
+    {:ok, %__MODULE__{args: args}}
+  end
+
+  @impl true
+  def handle_cast(:prompt_for_input, state) do
     IO.write("> ")
 
     case IO.read(:stdio, :line) do
       :eof ->
-        :ok
+        {:stop, :normal, state}
 
       {:error, reason} ->
         raise reason
 
       data ->
         try do
-          {query, stream} = Efsql.stream(data)
+          {query, stream} = Efsql.qall(data, limit: 2)
           print_table(query, stream)
         rescue
           e ->
             print_error(e)
         end
 
-        loop(args)
+        %__MODULE__{history: history} = state
+
+        GenServer.cast(self(), :prompt_for_input)
+        {:noreply, %__MODULE__{state | history: [data | history]}}
     end
   end
 
@@ -48,15 +75,14 @@ defmodule Efsql.Cli do
         _ -> true
       end)
 
-    IO.puts("#{inspect(opts)}")
-
     Application.put_env(:efsql, Efsql.Repo, opts)
 
     {:ok, _} = Application.ensure_all_started(:efsql)
+
+    IO.puts("Connected to #{cluster_file}")
   end
 
   defp get_cluster_file(args) do
-    IO.inspect(args, label: "args")
     args[:cluster_file] || get_default_cluster_file()
   end
 
