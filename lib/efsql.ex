@@ -26,6 +26,8 @@ defmodule Efsql do
   def qall(sql, options \\ []) do
     query = sql_to_ecto_query(sql)
 
+    # IO.inspect(Map.drop(query, [:__struct__]))
+
     result =
       case Efsql.QuerySplitter.partition(query, options) do
         {:all_range, {query1, id_a, id_b, options}, _query2} ->

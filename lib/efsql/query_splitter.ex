@@ -61,6 +61,39 @@ defmodule Efsql.QuerySplitter do
     {:all_range, {query1, id_a, id_b, options}, query2}
   end
 
+  def partition(
+        query = %Ecto.Query{
+          wheres: [
+            %Ecto.Query.BooleanExpr{
+              op: :and,
+              expr: {op, [], [{{:., [], [{:&, [], [0]}, :_]}, [], []}, id]}
+            }
+            | rest
+          ]
+        },
+        options
+      )
+      when op in ~w[> >= < <=]a do
+    query1 = %Ecto.Query{query | wheres: []}
+    query2 = %Ecto.Query{query | wheres: rest}
+
+    if length(rest) > 0 do
+      raise Unsupported, """
+      Query must be minimally constrained
+      """
+    end
+
+    options1 = []
+    options1 = if op == :>, do: options1 ++ [inclusive_left?: false], else: options1
+    options1 = if op == :<=, do: options1 ++ [inclusive_right?: true], else: options1
+    options = Keyword.merge(options, options1)
+
+    id_s = if op in ~w[> >=]a, do: id
+    id_e = if op in ~w[< <=]a, do: id
+
+    {:all_range, {query1, id_s, id_e, options}, query2}
+  end
+
   # all others
   def partition(query, options) do
     {:all, {query, options}, query}

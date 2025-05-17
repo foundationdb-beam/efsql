@@ -39,4 +39,28 @@ defmodule EfsqlTest.Integration.SelectByPk do
              )
              |> Enum.map(&Map.to_list/1)
   end
+
+  test "select by pk greater", context do
+    tenant_id = context[:tenant_id]
+
+    assert [
+             [id: "0001", name: "Alice", notes: "Lorem ipsum"],
+             [id: "0002", name: "Bob", notes: "foobar"],
+             [id: "0003", name: "Charles", notes: nil]
+           ] =
+             Efsql.all("select id, name, notes from #{tenant_id}.users where primary key > '0';")
+             |> Enum.map(&Map.to_list/1)
+  end
+
+  test "select by pk less", context do
+    tenant_id = context[:tenant_id]
+
+    assert [
+             [id: "0001", name: "Alice", notes: "Lorem ipsum"]
+           ] =
+             Efsql.all(
+               "select id, name, notes from #{tenant_id}.users where primary key < '0002';"
+             )
+             |> Enum.map(&Map.to_list/1)
+  end
 end

@@ -50,10 +50,11 @@ Alternate
 
     select col_a, col_b from tenant_id.schema_name where _ = 'foobar';
 
-### Select rows with primary key range
-(inclusive and exclusive inequalities are supported)
+### Select rows with primary key inequality
 
     select col_a, col_b from tenant_id.schema_name where primary key >= 'bar' and primary key < 'foo';
+    select col_a, col_b from tenant_id.schema_name where primary key > 'bar';
+    select col_a, col_b from tenant_id.schema_name where primary key < 'foo';
 
 Alternate
 

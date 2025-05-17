@@ -4,6 +4,8 @@ defmodule Efsql.Cli do
 
   defstruct args: [], history: []
 
+  @print_limit 15
+
   use GenServer
 
   def main(args) do
@@ -50,8 +52,8 @@ defmodule Efsql.Cli do
 
       data ->
         try do
-          {query, stream} = Efsql.qall(data, limit: 2)
-          print_table(query, stream)
+          {query, rows} = Efsql.qall(data, limit: @print_limit + 1)
+          print_table(query, rows)
         rescue
           e ->
             print_error(e)
@@ -106,15 +108,22 @@ defmodule Efsql.Cli do
     end
   end
 
-  defp print_table(query, stream) do
+  defp print_table(query, rows) do
     fields = QueryHelper.get_select_fields(query)
     Table.start(fields)
 
-    stream
-    |> Stream.map(&Map.to_list/1)
-    |> Stream.chunk_every(10)
-    |> Stream.each(&Table.format(&1, style: :light))
-    |> Stream.run()
+    rows = Enum.map(rows, &Map.to_list/1)
+
+    rows =
+      if length(rows) > @print_limit do
+        [[{first_key, _} | _] | _] = rows
+
+        Enum.slice(rows, 0, @print_limit) ++ [[{first_key, ".."}]]
+      else
+        rows
+      end
+
+    Table.format(rows, style: :light)
 
     Table.stop()
   end
