@@ -42,18 +42,12 @@ Use a readline-wrapper, such as rlwrap, to enable command history:
 
     select col_a, col_b from tenant_id.schema_name;
 
-### Select row with primary key
-
-Note: This is currently broken as we adapt to changes in SQL parser, and we will have to decide on a stable syntax.
-
-    select col_a, col_b from tenant_id.schema_name where primary key = 'foobar';
-    select col_a, col_b from tenant_id.schema_name where primary key >= 'bar' and primary key < 'foo';
-    select col_a, col_b from tenant_id.schema_name where primary key > 'bar';
-    select col_a, col_b from tenant_id.schema_name where primary key < 'foo';
-
-Alternate
+### Select row with _
 
     select col_a, col_b from tenant_id.schema_name where _ = 'foobar';
+    select col_a, col_b from tenant_id.schema_name where _ >= 'bar' and _ < 'foo';
+    select col_a, col_b from tenant_id.schema_name where _ > 'bar';
+    select col_a, col_b from tenant_id.schema_name where _ < 'foo';
 
 ### Select rows with index
 
