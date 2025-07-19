@@ -1,6 +1,11 @@
 defmodule Efsql do
   import Ecto.Query
 
+  def lex_and_parse(sql) do
+    {:ok, context, tokens} = SQL.Lexer.lex(sql)
+    SQL.Parser.parse(tokens, context)
+  end
+
   def hello() do
     tenant = EctoFoundationDB.Tenant.open!(Efsql.Repo, "localhost")
 
@@ -26,8 +31,6 @@ defmodule Efsql do
   def qall(sql, options \\ []) do
     query = sql_to_ecto_query(sql)
 
-    # IO.inspect(Map.drop(query, [:__struct__]))
-
     result =
       case Efsql.QuerySplitter.partition(query, options) do
         {:all_range, {query1, id_a, id_b, options}, _query2} ->
@@ -46,9 +49,9 @@ defmodule Efsql do
   end
 
   def sql_to_ecto_query(sql) do
-    {:ok, _opts, _, _, _, _, tokens} = SQL.Lexer.lex(sql, {1, 0, nil}, 0, format: true)
-    parsed = SQL.Parser.parse(tokens)
-    query = Efsql.SqlToEctoQuery.to_ecto_query(SQL.to_query(parsed))
+    {:ok, context, tokens} = SQL.Lexer.lex(sql)
+    {:ok, context, parsed} = SQL.Parser.parse(tokens, context)
+    query = Efsql.SqlToEctoQuery.to_ecto_query(SQL.to_query(parsed, context))
     # IO.inspect(Map.drop(query, [:__struct__]))
 
     if is_nil(query.prefix) do

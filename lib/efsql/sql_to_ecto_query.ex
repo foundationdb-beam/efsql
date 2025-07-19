@@ -1,7 +1,7 @@
 defmodule Efsql.SqlToEctoQuery do
   alias Efsql.Exception.Unsupported
 
-  @operator_map %{=: :==}
+  @operator_map %{=: :==, dot: :.}
 
   def to_ecto_query(tokens) do
     reduce(tokens, %Ecto.Query{}, &token_to_ecto_query/2)
@@ -59,8 +59,6 @@ defmodule Efsql.SqlToEctoQuery do
   end
 
   defp token_to_ecto_query({token, _, _}, _query) do
-    # IO.inspect(token, label: "query")
-
     raise Unsupported, """
     '#{token}' is not supported
     """
@@ -85,11 +83,7 @@ defmodule Efsql.SqlToEctoQuery do
     select_tokens_to_expr(rest, [get_ident_atom(ident_token) | acc])
   end
 
-  # @todo: not all strings are given as `:ident` tokens. For example, using
-  # 'select id, name from t.users' yields `:name` instead of `:ident`
-  # https://github.com/elixir-dbvisor/sql/issues/13
-  defp get_ident_atom({:ident, _meta, [field_name]}), do: to_atom(field_name)
-  defp get_ident_atom({reserved, _meta, []}), do: to_atom(reserved)
+  defp get_ident_atom({:ident, _meta, field_name}), do: to_atom(field_name)
 
   defp get_ident_atom({token, _meta, args}) do
     raise Unsupported, """
@@ -98,26 +92,24 @@ defmodule Efsql.SqlToEctoQuery do
   end
 
   defp from_tokens_to_source([
-         {:., _meta0,
-          [{_ident_or_double_quote, _meta1, [_tenant_id]}, {:ident, _meta2, [source]}]}
+         {:dot, _meta0, [{_ident_or_double_quote, _meta1, _tenant_id}, {:ident, _meta2, source}]}
          | _optional_source_alias_ident
        ])
-       when is_binary(source) do
-    {source, nil}
+       when is_list(source) do
+    {:erlang.iolist_to_binary(source), nil}
   end
 
-  defp from_tokens_to_source([{:ident, [line: 0, column: 25, file: {1, 0, nil}], [source]}])
-       when is_binary(source) do
-    {source, nil}
+  defp from_tokens_to_source([{:ident, _meta, source}])
+       when is_list(source) do
+    {:erlang.iolist_to_binary(source), nil}
   end
 
   defp from_tokens_to_prefix([
-         {:., _meta0,
-          [{_ident_or_double_quote, _meta1, [tenant_id]}, {:ident, _meta2, [_source]}]}
+         {:dot, _meta0, [{_ident_or_double_quote, _meta1, tenant_id}, {:ident, _meta2, _source}]}
          | _optional_source_alias_ident
        ])
-       when is_binary(tenant_id) do
-    tenant_id
+       when is_list(tenant_id) do
+    :erlang.iolist_to_binary(tenant_id)
   end
 
   defp from_tokens_to_prefix(_), do: nil
@@ -127,11 +119,11 @@ defmodule Efsql.SqlToEctoQuery do
   end
 
   defp where_tokens_to_wheres(
-         [{:primary, _meta0, []}, {:key, meta1, []}, {operator, meta2, []}, rhs | rest],
+         [{:primary, meta0, []}, {operator, meta2, []}, rhs | rest],
          acc
        )
        when operator in ~w[= > < >= <=]a do
-    lhs = {:ident, meta1, [:_]}
+    lhs = {:ident, meta0, :_}
     op_token = {operator, meta2, [lhs, rhs]}
     expr = operator_to_where_expr(op_token)
     acc = merge_operator_head(expr, acc)
@@ -202,11 +194,11 @@ defmodule Efsql.SqlToEctoQuery do
 
     expr_1 =
       {sql_operator_to_ecto_operator(op_1), [],
-       [{{:., [], [{:&, [], [0]}, where_field_1]}, [], []}, where_param_1]}
+       [{{:dot, [], [{:&, [], [0]}, where_field_1]}, [], []}, where_param_1]}
 
     expr_2 =
       {sql_operator_to_ecto_operator(op_2), [],
-       [{{:., [], [{:&, [], [0]}, where_field_2]}, [], []}, where_param_2]}
+       [{{:dot, [], [{:&, [], [0]}, where_field_2]}, [], []}, where_param_2]}
 
     %Ecto.Query.BooleanExpr{
       op: :and,
@@ -238,12 +230,13 @@ defmodule Efsql.SqlToEctoQuery do
 
   defp to_atom(atom) when is_atom(atom), do: atom
   defp to_atom(string) when is_binary(string), do: String.to_atom(string)
+  defp to_atom(list) when is_list(list), do: :erlang.iolist_to_binary(list) |> to_atom()
 
   defp sql_operator_to_ecto_operator(operator) do
     Map.get(@operator_map, operator, operator)
   end
 
-  defp get_where_param({:quote, _, [data]}) do
-    data
+  defp get_where_param({:quote, _, data}) do
+    :erlang.iolist_to_binary(data)
   end
 end
