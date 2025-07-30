@@ -34,9 +34,11 @@ defmodule Efsql do
     result =
       case Efsql.QuerySplitter.partition(query, options) do
         {:all_range, {query1, id_a, id_b, options}, _query2} ->
+          # IO.inspect({query1, id_a, id_b, options})
           Efsql.Repo.all_range(query1, id_a, id_b, options)
 
         {:all, {query1, options}, _query2} ->
+          # IO.inspect({query1, options})
           Efsql.Repo.all(query1, options)
       end
 
@@ -50,8 +52,9 @@ defmodule Efsql do
 
   def sql_to_ecto_query(sql) do
     {:ok, context, tokens} = SQL.Lexer.lex(sql)
-    {:ok, context, parsed} = SQL.Parser.parse(tokens, context)
-    query = Efsql.SqlToEctoQuery.to_ecto_query(SQL.to_query(parsed, context))
+    {:ok, _context, parsed} = SQL.Parser.parse(tokens, context)
+    [{:colon, _meta, query}, []] = parsed
+    query = Efsql.SqlToEctoQuery.to_ecto_query(query)
     # IO.inspect(Map.drop(query, [:__struct__]))
 
     if is_nil(query.prefix) do

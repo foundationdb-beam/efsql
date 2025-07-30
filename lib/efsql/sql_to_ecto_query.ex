@@ -58,9 +58,11 @@ defmodule Efsql.SqlToEctoQuery do
     query
   end
 
-  defp token_to_ecto_query({token, _, _}, _query) do
+  defp token_to_ecto_query(data = {token, _, _}, _query) do
     raise Unsupported, """
     '#{token}' is not supported
+
+    #{inspect(data)}
     """
   end
 
@@ -84,6 +86,7 @@ defmodule Efsql.SqlToEctoQuery do
   end
 
   defp get_ident_atom({:ident, _meta, field_name}), do: to_atom(field_name)
+  defp get_ident_atom({:double_quote, _meta, field_name}), do: to_atom(field_name)
 
   defp get_ident_atom({token, _meta, args}) do
     raise Unsupported, """
@@ -181,33 +184,6 @@ defmodule Efsql.SqlToEctoQuery do
 
   defp merge_operator_head(expr, acc) do
     [expr | acc]
-  end
-
-  # @todo: Is this a bug in the AST? Sort of awkward construction of the boolean operators, hard to generalize
-  defp operator_to_where_expr(
-         {op_2, meta, [{:and, _meta1, [{op_1, _meta2, [lhs_1, rhs_1]}, lhs_2]}, rhs_2]}
-       ) do
-    where_field_1 = get_ident_atom(lhs_1)
-    where_field_2 = get_ident_atom(lhs_2)
-    where_param_1 = get_where_param(rhs_1)
-    where_param_2 = get_where_param(rhs_2)
-
-    expr_1 =
-      {sql_operator_to_ecto_operator(op_1), [],
-       [{{:dot, [], [{:&, [], [0]}, where_field_1]}, [], []}, where_param_1]}
-
-    expr_2 =
-      {sql_operator_to_ecto_operator(op_2), [],
-       [{{:dot, [], [{:&, [], [0]}, where_field_2]}, [], []}, where_param_2]}
-
-    %Ecto.Query.BooleanExpr{
-      op: :and,
-      expr: {expr_1, expr_2},
-      file: meta[:file],
-      line: meta[:line],
-      params: [],
-      subqueries: []
-    }
   end
 
   defp operator_to_where_expr({operator, meta, [lhs, rhs]}) do
