@@ -148,9 +148,40 @@ defmodule Efsql.SqlToEctoQuery do
     where_tokens_to_wheres(rest, acc)
   end
 
-  defp where_tokens_to_wheres([{operator, _meta, operands} | _], _acc) do
+  defp where_tokens_to_wheres(
+         [{:between, meta1, [lhs, rhs_1]}, {:and, _meta2, []}, rhs_2 | rest],
+         acc
+       ) do
+    where_field = get_ident_atom(lhs)
+    where_param_1 = get_where_param(rhs_1)
+    where_param_2 = get_where_param(rhs_2)
+
+    expr_1 =
+      {:>=, [], [{{:., [], [{:&, [], [0]}, where_field]}, [], []}, where_param_1]}
+
+    expr_2 =
+      {:<=, [], [{{:., [], [{:&, [], [0]}, where_field]}, [], []}, where_param_2]}
+
+    acc2 = [
+      %Ecto.Query.BooleanExpr{
+        op: :and,
+        expr: {expr_1, expr_2},
+        file: meta1[:file],
+        line: meta1[:line],
+        params: [],
+        subqueries: []
+      }
+      | acc
+    ]
+
+    where_tokens_to_wheres(rest, acc2)
+  end
+
+  defp where_tokens_to_wheres([t = {operator, _meta, operands} | _], _acc) do
     raise Unsupported, """
     '#{inspect(operator)}'/#{length(operands)} is not supported in the where clause.
+
+    #{inspect(t)}
     """
   end
 

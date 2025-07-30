@@ -21,4 +21,17 @@ defmodule EfsqlTest.Integration.SelectByIndex do
              )
              |> Enum.map(&Map.to_list/1)
   end
+
+  test "select by index between - keyword", context do
+    tenant_id = context[:tenant_id]
+
+    assert [
+             [id: "0001", name: "Alice", notes: "Lorem ipsum"],
+             [id: "0002", name: "Bob", notes: "foobar"]
+           ] =
+             Efsql.all(
+               "select id, name, notes from #{tenant_id}.users where name between 'A' and 'C';"
+             )
+             |> Enum.map(&Map.to_list/1)
+  end
 end

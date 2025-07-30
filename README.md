@@ -48,11 +48,13 @@ Use a readline-wrapper, such as rlwrap, to enable command history:
     select col_a, col_b from tenant_id.schema_name where _ >= 'bar' and _ < 'foo';
     select col_a, col_b from tenant_id.schema_name where _ > 'bar';
     select col_a, col_b from tenant_id.schema_name where _ < 'foo';
+    select col_a, col_b from tenant_id.schema_name where _ between 'bar' and 'foo';
 
 ### Select rows with index
 
     select col_a, col_b from tenant_id.schema_name where index_col = 'baz';
     select col_a, col_b from tenant_id.schema_name where index_col >= 'baz' and index_col < 'zaz';
+    select col_a, col_b from tenant_id.schema_name where index_col between 'baz' and 'zaz';
 
 See EctoFoundationDB's Default indexes. Since we don't require access to the Ecto.Schema, and
 EctoFDB doesn't store the schema in the database, we loosen the type checking for these queries.
