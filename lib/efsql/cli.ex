@@ -1,18 +1,26 @@
 defmodule Efsql.Cli do
-  alias IO.ANSI.Table
-  alias Efsql.QueryHelper
-
-  defstruct args: [], history: []
-
-  @print_limit 15
+  defstruct args: [], history: [], debug: false, tenants: %{}, limit: 15
 
   use GenServer
+
+  def run do
+    cluster_file =
+      Application.get_env(:efsql, Efsql.Repo, [])
+      |> Keyword.get(:cluster_file, "default")
+
+    IO.puts("Connected to #{cluster_file}")
+    args = if System.get_env("EFSQL_DEBUG") == "true", do: [debug: true], else: []
+    {:ok, pid} = GenServer.start_link(__MODULE__, args)
+    mref = Process.monitor(pid)
+    wait_for_down(pid, mref)
+    System.halt(0)
+  end
 
   def main(args) do
     {args, _, _} =
       OptionParser.parse(args,
         aliases: [C: :cluster_file],
-        strict: [cluster_file: :string, storage_id: :string]
+        strict: [cluster_file: :string, storage_id: :string, debug: :boolean]
       )
 
     init_ecto_foundationdb!(args)
@@ -36,11 +44,11 @@ defmodule Efsql.Cli do
   def init(args) do
     IO.puts("[Ctrl+D to exit]")
     GenServer.cast(self(), :prompt_for_input)
-    {:ok, %__MODULE__{args: args}}
+    {:ok, %__MODULE__{args: args, debug: Keyword.get(args, :debug, false)}}
   end
 
   @impl true
-  def handle_cast(:prompt_for_input, state) do
+  def handle_cast(:prompt_for_input, state = %__MODULE__{}) do
     IO.write("> ")
 
     case IO.read(:stdio, :line) do
@@ -51,19 +59,55 @@ defmodule Efsql.Cli do
         raise reason
 
       data ->
-        try do
-          {query, rows} = Efsql.qall(data, limit: @print_limit + 1)
-          print_table(query, rows)
-        rescue
-          e ->
-            print_error(e)
-        end
-
-        %__MODULE__{history: history} = state
-
+        state = handle_input(String.trim(data), state)
         GenServer.cast(self(), :prompt_for_input)
-        {:noreply, %__MODULE__{state | history: [data | history]}}
+        {:noreply, state}
     end
+  end
+
+  defp handle_input("", state = %__MODULE__{}), do: state
+
+  defp handle_input("\\?", state = %__MODULE__{}) do
+    Owl.IO.puts(Owl.Data.tag("""
+    Meta-commands:
+      \\set limit N    set the default row limit (currently #{state.limit})
+      \\?              show this help
+    """, :light_black))
+    state
+  end
+
+  defp handle_input("\\set limit " <> rest, state = %__MODULE__{}) do
+    case Integer.parse(String.trim(rest)) do
+      {n, ""} when n > 0 ->
+        Owl.IO.puts(Owl.Data.tag("limit set to #{n}", :light_black))
+        %__MODULE__{state | limit: n}
+
+      _ ->
+        print_error("Usage: \\set limit <positive integer>")
+        state
+    end
+  end
+
+  defp handle_input(data, state = %__MODULE__{}) do
+    limit_sql = "limit #{state.limit + 1}"
+
+    {tenants} =
+      try do
+        {sql, display_limit} =
+          if String.match?(data, ~r/\blimit\b/i),
+            do: {data, :all},
+            else: {String.replace(data, ~r/;\s*$/, " #{limit_sql};"), state.limit}
+        {call, rows, tenants} = Efsql.qall(sql, [], state.tenants)
+        if state.debug, do: print_debug(call)
+        print_table(rows, display_limit)
+        {tenants}
+      rescue
+        e ->
+          print_error(e)
+          {state.tenants}
+      end
+
+    %__MODULE__{state | history: [data | state.history], tenants: tenants}
   end
 
   def init_ecto_foundationdb!(args) do
@@ -108,27 +152,52 @@ defmodule Efsql.Cli do
     end
   end
 
-  defp print_table(query, rows) do
-    fields = QueryHelper.get_select_fields(query)
-    Table.start(fields)
+  defp print_table([], _limit) do
+    Owl.IO.puts(Owl.Data.tag("(0 rows)", :light_black))
+  end
 
-    rows = Enum.map(rows, &Map.to_list/1)
+  defp print_table(rows, :all) do
+    print_rows(rows, false)
+  end
 
-    rows =
-      if length(rows) > @print_limit do
-        [[{first_key, _} | _] | _] = rows
+  defp print_table(rows, limit) do
+    {display_rows, more?} =
+      if length(rows) > limit,
+        do: {Enum.take(rows, limit), true},
+        else: {rows, false}
 
-        Enum.slice(rows, 0, @print_limit) ++ [[{first_key, ".."}]]
-      else
-        rows
-      end
+    print_rows(display_rows, more?)
+  end
 
-    Table.format(rows, style: :light)
+  defp print_rows(rows, more?) do
+    rows
+    |> Enum.map(fn row ->
+      Map.new(row, fn {k, v} -> {to_string(k), format_value(v)} end)
+    end)
+    |> Owl.Table.new(border_style: :solid_rounded, padding_x: 1)
+    |> Owl.IO.puts()
 
-    Table.stop()
+    n = length(rows)
+    label = if more?, do: "(#{n} rows, more available — add LIMIT)", else: "(#{n} rows)"
+    Owl.IO.puts(Owl.Data.tag(label, :light_black))
+  end
+
+  defp format_value(nil), do: Owl.Data.tag("null", :light_black)
+  defp format_value(v) when is_binary(v), do: v
+  defp format_value({:versionstamp, _, _, _} = v), do: to_string(EctoFoundationDB.Versionstamp.to_integer(v))
+  defp format_value(v), do: inspect(v)
+
+  defp print_debug({:all_range, query, id_a, id_b, options}) do
+    msg = "Repo.all_range(\n  #{inspect(query, pretty: true)},\n  #{inspect(id_a)},\n  #{inspect(id_b)},\n  #{inspect(options)}\n)"
+    Owl.IO.puts(Owl.Data.tag(msg, :light_black))
+  end
+
+  defp print_debug({:all, query, options}) do
+    msg = "Repo.all(\n  #{inspect(query, pretty: true)},\n  #{inspect(options)}\n)"
+    Owl.IO.puts(Owl.Data.tag(msg, :light_black))
   end
 
   defp print_error(term) do
-    IO.puts("#{IO.ANSI.red()}#{inspect(term)}#{IO.ANSI.reset()}")
+    Owl.IO.puts(Owl.Data.tag(inspect(term), :red))
   end
 end

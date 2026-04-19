@@ -8,14 +8,15 @@ defmodule Efsql.MixProject do
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
-      elixirc_paths: elixirc_paths(Mix.env())
+      elixirc_paths: elixirc_paths(Mix.env()),
+      releases: releases(),
+      aliases: aliases()
     ]
   end
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_), do: ["lib"]
 
-  # Run "mix help compile.app" to learn about applications.
   def application do
     [
       mod: {Efsql.Application, []},
@@ -23,12 +24,25 @@ defmodule Efsql.MixProject do
     ]
   end
 
-  # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:ecto_foundationdb, github: "foundationdb-beam/ecto_foundationdb"},
+      {:ecto_foundationdb, path: "../ecto_foundationdb"},
       {:sql, github: "elixir-dbvisor/sql"},
-      {:io_ansi_table, "~> 1.0"}
+      {:owl, "~> 0.13"},
+      {:ex_fdbmonitor, "~> 0.1", only: :dev, runtime: false}
     ]
+  end
+
+  defp releases do
+    [
+      efsql: [
+        include_executables_for: [:unix],
+        strip_beams: false
+      ]
+    ]
+  end
+
+  defp aliases do
+    []
   end
 end

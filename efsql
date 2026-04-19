@@ -1,0 +1,5 @@
+#!/bin/sh
+# Build the release and exec into it (replaces this process, preserving terminal).
+set -e
+mix release --overwrite > /dev/null
+exec rlwrap -ra -pgreen -f completions ./_build/dev/rel/efsql/bin/efsql "$@"

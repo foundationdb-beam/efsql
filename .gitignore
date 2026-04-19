@@ -27,3 +27,4 @@ efsql-*.tar
 .erlfdb_sandbox
 .elixir_ls
 dev-efsql
+.ex_fdbmonitor

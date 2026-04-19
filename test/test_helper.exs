@@ -12,4 +12,4 @@ Application.put_env(:efsql, Efsql.Repo,
 
 {:ok, _} = EfsqlTest.Repo.start_link()
 
-ExUnit.start()
+ExUnit.start(capture_log: true)

@@ -1,0 +1,45 @@
+#!/bin/sh
+set -e
+
+SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+RELEASE_ROOT="$(dirname "$(dirname "$SELF")")"
+RELEASE_VSN="$(awk '{print $2}' "$RELEASE_ROOT/releases/start_erl.data")"
+RELEASE_COOKIE="$(cat "$RELEASE_ROOT/releases/COOKIE")"
+
+export RELEASE_ROOT
+export RELEASE_VSN
+export RELEASE_COOKIE
+export RELEASE_SYS_CONFIG="$RELEASE_ROOT/releases/$RELEASE_VSN/sys"
+export RELEASE_BOOT_SCRIPTS="$RELEASE_ROOT/releases/$RELEASE_VSN"
+export RELEASE_LIB="$RELEASE_ROOT/lib"
+export RELEASE_VM_ARGS="$RELEASE_ROOT/releases/$RELEASE_VSN/vm.args"
+export RELEASE_PROG="$SELF"
+
+usage() {
+  echo "Usage: efsql [-C cluster_file] [--storage-id id] [--debug]"
+  echo ""
+  echo "Options:"
+  echo "  -C, --cluster-file PATH   Path to fdb.cluster file"
+  echo "      --storage-id ID       FoundationDB storage ID"
+  echo "      --debug               Print the computed Ecto query before each result"
+  echo "  -h, --help                Show this help"
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -C|--cluster-file) export FDB_CLUSTER_FILE="$2"; shift 2;;
+    --storage-id) export EFSQL_STORAGE_ID="$2"; shift 2;;
+    --debug) export EFSQL_DEBUG="true"; shift;;
+    -h|--help) usage; exit 0;;
+    *) echo "Unknown flag: $1" >&2; usage >&2; exit 1;;
+  esac
+done
+
+exec "$RELEASE_BOOT_SCRIPTS/elixir" \
+  --cookie "$RELEASE_COOKIE" \
+  --erl-config "$RELEASE_SYS_CONFIG" \
+  --boot "$RELEASE_BOOT_SCRIPTS/start_clean" \
+  --boot-var RELEASE_LIB "$RELEASE_LIB" \
+  --vm-args "$RELEASE_VM_ARGS" \
+  --eval "Application.ensure_all_started(:efsql); Efsql.Cli.run()" \
+  --no-halt

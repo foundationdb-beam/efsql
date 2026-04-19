@@ -51,13 +51,13 @@ defmodule EfsqlTest.Integration.SelectAllRows do
              |> Enum.map(&Map.to_list/1)
   end
 
-  test "select with repo limi", context do
+  test "select with limit", context do
     tenant_id = context[:tenant_id]
 
     assert [
              [id: "0001"]
            ] =
-             Efsql.all("select id from #{tenant_id}.users;", limit: 1)
+             Efsql.all("select id from #{tenant_id}.users limit 1;")
              |> Enum.map(&Map.to_list/1)
   end
 end

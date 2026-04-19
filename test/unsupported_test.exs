@@ -3,11 +3,11 @@ defmodule EfsqlTest.Integration.Unsupported do
 
   alias Efsql.Exception.Unsupported
 
-  test "* raises", context do
+  test "select * raises for index queries", context do
     tenant_id = context[:tenant_id]
 
-    assert_raise(Unsupported, ~r/'*' is not supported/, fn ->
-      Efsql.all("select * from #{tenant_id}.users;")
+    assert_raise(Unsupported, ~r/SELECT \* is not supported for index queries/, fn ->
+      Efsql.all("select * from #{tenant_id}.users where name = 'Alice';")
     end)
   end
 end

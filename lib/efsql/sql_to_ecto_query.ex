@@ -1,249 +1,216 @@
 defmodule Efsql.SqlToEctoQuery do
   alias Efsql.Exception.Unsupported
 
-  @operator_map %{=: :==, dot: :.}
+  @comparison_ops ~w[= >= <= > <]a
 
-  def to_ecto_query(tokens) do
-    reduce(tokens, %Ecto.Query{}, &token_to_ecto_query/2)
-  end
-
-  defp reduce(tokens, acc, fun) do
-    Enum.reduce(tokens, acc, fn token, acc0 ->
-      fun.(token, acc0)
+  def to_ecto_query(parsed) do
+    parsed
+    |> Enum.reject(fn
+      {:colon, _, _} -> true
+      [] -> true
+      _ -> false
     end)
+    |> Enum.reduce(%Ecto.Query{}, &clause_to_query/2)
   end
 
-  defp token_to_ecto_query({:select, meta, tokens}, query) do
-    field_names = select_tokens_to_expr(tokens, [])
+  defp clause_to_query({:select, _meta, fields}, %Ecto.Query{} = query) do
+    case parse_select_fields(fields, []) do
+      :star ->
+        query
 
-    %Ecto.Query{
-      query
-      | select: %Ecto.Query.SelectExpr{
-          expr: {:&, [], [0]},
-          file: meta[:file],
-          line: meta[:line],
-          fields: nil,
-          params: [],
-          take: %{0 => {:any, field_names}},
-          subqueries: [],
-          aliases: %{}
+      field_names ->
+        %Ecto.Query{
+          query
+          | select: %Ecto.Query.SelectExpr{
+              expr: {:&, [], [0]},
+              file: nil,
+              line: nil,
+              fields: nil,
+              params: [],
+              take: %{0 => {:any, field_names}},
+              subqueries: [],
+              aliases: %{}
+            }
         }
-    }
+    end
   end
 
-  defp token_to_ecto_query({:from, meta, tokens}, query) do
+  defp clause_to_query({:from, meta, [source_token | _]}, %Ecto.Query{} = query) do
     %Ecto.Query{
       query
       | from: %Ecto.Query.FromExpr{
-          source: from_tokens_to_source(tokens),
+          source: from_token_to_source(source_token),
           file: meta[:file],
-          line: meta[:line],
+          line: span_line(meta),
           as: nil,
           prefix: nil,
           params: [],
           hints: []
         },
-        prefix: from_tokens_to_prefix(tokens)
+        prefix: from_token_to_prefix(source_token)
     }
   end
 
-  defp token_to_ecto_query({:where, _meta, tokens}, query) do
+  defp clause_to_query({:where, _meta, [expr]}, %Ecto.Query{} = query) do
+    %Ecto.Query{query | wheres: parse_where_expr(expr)}
+  end
+
+  defp clause_to_query({:limit, meta, [{:numeric, _nmeta, value}]}, %Ecto.Query{} = query) do
     %Ecto.Query{
       query
-      | wheres: where_tokens_to_wheres(tokens, [])
+      | limit: %Ecto.Query.LimitExpr{
+          expr: :erlang.list_to_integer(value),
+          file: meta[:file],
+          line: span_line(meta),
+          with_ties: false,
+          params: []
+        }
     }
   end
 
-  defp token_to_ecto_query({:colon, _meta, []}, query) do
-    query
+  defp clause_to_query({token, _, _}, %Ecto.Query{}) do
+    raise Unsupported, "'#{token}' is not supported"
   end
 
-  defp token_to_ecto_query(data = {token, _, _}, _query) do
-    raise Unsupported, """
-    '#{token}' is not supported
+  # SELECT
 
-    #{inspect(data)}
-    """
+  defp parse_select_fields([], acc), do: Enum.reverse(acc)
+
+  defp parse_select_fields([{:*, _, []} | _], _acc), do: :star
+
+  defp parse_select_fields([{:comma, _meta, [field]} | rest], acc) do
+    parse_select_fields(rest, [token_to_field_atom(field) | acc])
   end
 
-  defp select_tokens_to_expr([], acc) do
-    Enum.reverse(acc)
+  defp parse_select_fields([field | rest], acc) do
+    parse_select_fields(rest, [token_to_field_atom(field) | acc])
   end
 
-  defp select_tokens_to_expr([{:*, _meta, []}], _acc) do
-    raise Unsupported, """
-    The 'select' expression must have a list of fields. '*' is not supported
-    """
+  defp token_to_field_atom({:ident, _meta, value}), do: charlist_to_atom(value)
+  defp token_to_field_atom({:double_quote, _meta, value}), do: charlist_to_atom(value)
+  defp token_to_field_atom({token, _meta, []}), do: token
+
+  defp token_to_field_atom({token, _meta, args}) do
+    raise Unsupported, "Expected an identifier, got #{token}/#{length(args)} instead."
   end
 
-  defp select_tokens_to_expr([{:comma, _meta, [following_comma]} | rest], acc) do
-    [item] = select_tokens_to_expr([following_comma], [])
-    select_tokens_to_expr(rest, [item | acc])
+  # FROM
+
+  defp from_token_to_source({:dot, _meta, [_storage, {:dot, _, [_tenant, {:ident, _m, table}]}]}) do
+    {:erlang.list_to_binary(table), nil}
   end
 
-  defp select_tokens_to_expr([ident_token | rest], acc) do
-    select_tokens_to_expr(rest, [get_ident_atom(ident_token) | acc])
+  defp from_token_to_source({:dot, _meta, [_schema, {:ident, _m, table}]}) do
+    {:erlang.list_to_binary(table), nil}
   end
 
-  defp get_ident_atom({:ident, _meta, field_name}), do: to_atom(field_name)
-  defp get_ident_atom({:double_quote, _meta, field_name}), do: to_atom(field_name)
-
-  defp get_ident_atom({token, _meta, args}) do
-    raise Unsupported, """
-    Expected an identifier, got #{token}/#{length(args)} instead.
-    """
+  defp from_token_to_source({:ident, _meta, table}) do
+    {:erlang.list_to_binary(table), nil}
   end
 
-  defp from_tokens_to_source([
-         {:dot, _meta0, [{_ident_or_double_quote, _meta1, _tenant_id}, {:ident, _meta2, source}]}
-         | _optional_source_alias_ident
-       ])
-       when is_list(source) do
-    {:erlang.iolist_to_binary(source), nil}
+  defp from_token_to_prefix({:dot, _meta, [{_st, _sm, storage}, {:dot, _, [{_tt, _tm, tenant}, _table]}]}) do
+    {:erlang.list_to_binary(storage), :erlang.list_to_binary(tenant)}
   end
 
-  defp from_tokens_to_source([{:ident, _meta, source}])
-       when is_list(source) do
-    {:erlang.iolist_to_binary(source), nil}
+  defp from_token_to_prefix({:dot, _meta, [{_tag, _m, schema}, _table]}) do
+    :erlang.list_to_binary(schema)
   end
 
-  defp from_tokens_to_prefix([
-         {:dot, _meta0, [{_ident_or_double_quote, _meta1, tenant_id}, {:ident, _meta2, _source}]}
-         | _optional_source_alias_ident
-       ])
-       when is_list(tenant_id) do
-    :erlang.iolist_to_binary(tenant_id)
+  defp from_token_to_prefix(_), do: nil
+
+  # WHERE
+
+  defp parse_where_expr({:and, meta, [lhs, rhs]}) do
+    lhs_expr = parse_comparison(lhs, meta)
+    rhs_expr = parse_comparison(rhs, meta)
+    merge_range(lhs_expr, rhs_expr)
   end
 
-  defp from_tokens_to_prefix(_), do: nil
+  defp parse_where_expr({:between, meta, [field, {:and, _and_meta, [rhs1, rhs2]}]}) do
+    where_field = token_to_field_atom(field)
+    param1 = token_to_param(rhs1)
+    param2 = token_to_param(rhs2)
+    expr1 = {:>=, [], [field_ref(where_field), param1]}
+    expr2 = {:<=, [], [field_ref(where_field), param2]}
 
-  defp where_tokens_to_wheres([], acc) do
-    Enum.reverse(acc)
-  end
-
-  defp where_tokens_to_wheres(
-         [{:primary, meta0, []}, {operator, meta2, []}, rhs | rest],
-         acc
-       )
-       when operator in ~w[= > < >= <=]a do
-    lhs = {:ident, meta0, :_}
-    op_token = {operator, meta2, [lhs, rhs]}
-    expr = operator_to_where_expr(op_token)
-    acc = merge_operator_head(expr, acc)
-    where_tokens_to_wheres(rest, acc)
-  end
-
-  defp where_tokens_to_wheres([op_token = {operator, _meta, [_lhs, _rhs]} | rest], acc)
-       when operator in ~w[= >= <= > <]a do
-    expr = operator_to_where_expr(op_token)
-    acc = merge_operator_head(expr, acc)
-    where_tokens_to_wheres(rest, acc)
-  end
-
-  defp where_tokens_to_wheres([{:and, _meta, []} | rest], acc) do
-    where_tokens_to_wheres(rest, acc)
-  end
-
-  defp where_tokens_to_wheres([{:and, _meta, rest}], acc) do
-    where_tokens_to_wheres(rest, acc)
-  end
-
-  defp where_tokens_to_wheres(
-         [{:between, meta1, [lhs, rhs_1]}, {:and, _meta2, []}, rhs_2 | rest],
-         acc
-       ) do
-    where_field = get_ident_atom(lhs)
-    where_param_1 = get_where_param(rhs_1)
-    where_param_2 = get_where_param(rhs_2)
-
-    expr_1 =
-      {:>=, [], [{{:., [], [{:&, [], [0]}, where_field]}, [], []}, where_param_1]}
-
-    expr_2 =
-      {:<=, [], [{{:., [], [{:&, [], [0]}, where_field]}, [], []}, where_param_2]}
-
-    acc2 = [
+    [
       %Ecto.Query.BooleanExpr{
         op: :and,
-        expr: {expr_1, expr_2},
-        file: meta1[:file],
-        line: meta1[:line],
+        expr: {expr1, expr2},
+        file: meta[:file],
+        line: span_line(meta),
         params: [],
         subqueries: []
       }
-      | acc
-    ]
-
-    where_tokens_to_wheres(rest, acc2)
-  end
-
-  defp where_tokens_to_wheres([t = {operator, _meta, operands} | _], _acc) do
-    raise Unsupported, """
-    '#{inspect(operator)}'/#{length(operands)} is not supported in the where clause.
-
-    #{inspect(t)}
-    """
-  end
-
-  # @todo We are very specific in our supported operators in EctoFDB, which forces this merge
-  defp merge_operator_head(
-         %Ecto.Query.BooleanExpr{
-           op: :and,
-           expr:
-             expr_rhs =
-               {between_op_rhs, [], [{{:., [], [{:&, [], [0]}, field_name]}, [], []}, _param_b]}
-         },
-         [
-           head = %Ecto.Query.BooleanExpr{
-             op: :and,
-             expr:
-               expr_lhs =
-                 {between_op_lhs, [], [{{:., [], [{:&, [], [0]}, field_name]}, [], []}, _param_a]}
-           }
-           | acc
-         ]
-       )
-       when between_op_lhs in ~w[> >=]a and between_op_rhs in ~w[< <=]a do
-    [
-      %Ecto.Query.BooleanExpr{
-        head
-        | expr: {expr_lhs, expr_rhs}
-      }
-      | acc
     ]
   end
 
-  defp merge_operator_head(expr, acc) do
-    [expr | acc]
+  defp parse_where_expr({operator, _meta, [_lhs, _rhs]} = token)
+       when operator in @comparison_ops do
+    [parse_comparison(token, [])]
   end
 
-  defp operator_to_where_expr({operator, meta, [lhs, rhs]}) do
-    where_field = get_ident_atom(lhs)
-    where_param = get_where_param(rhs)
+  defp parse_where_expr({token, _meta, args}) do
+    raise Unsupported, "'#{token}'/#{length(args)} is not supported in the where clause."
+  end
 
-    expr =
-      {sql_operator_to_ecto_operator(operator), [],
-       [{{:., [], [{:&, [], [0]}, where_field]}, [], []}, where_param]}
+  defp parse_comparison({operator, meta, [lhs, rhs]}, _parent_meta)
+       when operator in @comparison_ops do
+    where_field = token_to_field_atom(lhs)
+    param = token_to_param(rhs)
 
     %Ecto.Query.BooleanExpr{
       op: :and,
-      expr: expr,
+      expr: {sql_op_to_ecto_op(operator), [], [field_ref(where_field), param]},
       file: meta[:file],
-      line: meta[:line],
+      line: span_line(meta),
       params: [],
       subqueries: []
     }
   end
 
-  defp to_atom(atom) when is_atom(atom), do: atom
-  defp to_atom(string) when is_binary(string), do: String.to_atom(string)
-  defp to_atom(list) when is_list(list), do: :erlang.iolist_to_binary(list) |> to_atom()
-
-  defp sql_operator_to_ecto_operator(operator) do
-    Map.get(@operator_map, operator, operator)
+  defp merge_range(
+         %Ecto.Query.BooleanExpr{
+           op: :and,
+           expr: {lhs_op, [], [lhs_field_ref, _lhs_param]} = lhs_expr
+         } = lhs_bool,
+         %Ecto.Query.BooleanExpr{
+           op: :and,
+           expr: {rhs_op, [], [rhs_field_ref, _rhs_param]} = rhs_expr
+         }
+       )
+       when lhs_op in ~w[> >=]a and rhs_op in ~w[< <=]a and lhs_field_ref == rhs_field_ref do
+    [%Ecto.Query.BooleanExpr{lhs_bool | expr: {lhs_expr, rhs_expr}}]
   end
 
-  defp get_where_param({:quote, _, data}) do
-    :erlang.iolist_to_binary(data)
+  defp merge_range(lhs, rhs), do: [lhs, rhs]
+
+  defp field_ref(field_atom) do
+    {{:., [], [{:&, [], [0]}, field_atom]}, [], []}
+  end
+
+  defp token_to_param({:quote, _meta, value}) do
+    :erlang.list_to_binary(value)
+  end
+
+  defp token_to_param({:paren, _meta, [{:quote, _, part}, {:comma, _, [{:*, _, []}]}]}) do
+    {:erlang.list_to_binary(part), :*}
+  end
+
+  defp token_to_param({:paren, _meta, [{:quote, _, part}, {:comma, _, [{:numeric, _, n}]}]}) do
+    {:erlang.list_to_binary(part), EctoFoundationDB.Versionstamp.from_integer(:erlang.list_to_integer(n))}
+  end
+
+  defp sql_op_to_ecto_op(:=), do: :==
+  defp sql_op_to_ecto_op(op), do: op
+
+  defp charlist_to_atom(charlist) when is_list(charlist), do: :erlang.list_to_atom(charlist)
+  defp charlist_to_atom(atom) when is_atom(atom), do: atom
+
+  defp span_line(meta) do
+    case meta[:span] do
+      {line, _, _, _, _, _} -> line
+      _ -> nil
+    end
   end
 end
