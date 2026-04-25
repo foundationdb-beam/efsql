@@ -70,9 +70,43 @@ defmodule Efsql.Cli do
   defp handle_input("\\?", state = %__MODULE__{}) do
     Owl.IO.puts(Owl.Data.tag("""
     Meta-commands:
-      \\set limit N    set the default row limit (currently #{state.limit})
-      \\?              show this help
+      \\tenants [storage_id]  list tenants (optionally for a specific storage id)
+      \\set limit N           set the default row limit (currently #{state.limit})
+      \\?                     show this help
     """, :light_black))
+    state
+  end
+
+  defp handle_input("\\tenants" <> rest, state = %__MODULE__{}) do
+    storage_id =
+      case String.trim(rest) do
+        "" -> nil
+        id -> id
+      end
+
+    try do
+      config = Efsql.Repo.config()
+      config = if storage_id, do: Keyword.put(config, :storage_id, storage_id), else: config
+      db = Ecto.Adapters.FoundationDB.db(Efsql.Repo)
+      tenant_ids = EctoFoundationDB.Tenant.Backend.list(db, config)
+
+      case tenant_ids do
+        [] ->
+          Owl.IO.puts(Owl.Data.tag("(0 tenants)", :light_black))
+
+        _ ->
+          tenant_ids
+          |> Enum.map(&%{"tenant" => &1})
+          |> Owl.Table.new(border_style: :solid_rounded, padding_x: 1)
+          |> Owl.IO.puts()
+
+          n = length(tenant_ids)
+          Owl.IO.puts(Owl.Data.tag("(#{n} #{if n == 1, do: "tenant", else: "tenants"})", :light_black))
+      end
+    rescue
+      e -> print_error(e)
+    end
+
     state
   end
 

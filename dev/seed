@@ -1,4 +1,4 @@
 #!/bin/sh
 set -e
 cd "$(dirname "$0")/.."
-exec elixir --erl "-name manager@127.0.0.1" -S mix run dev/seed.exs "$@"
+exec elixir --erl "-name manager@127.0.0.1" -S mix run dev/seed.exs --no-start "$@"
