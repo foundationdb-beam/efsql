@@ -55,7 +55,8 @@ defmodule Efsql.SqlToEctoQuery do
     %Ecto.Query{query | wheres: parse_where_expr(expr)}
   end
 
-  defp clause_to_query({:limit, meta, [{:numeric, _nmeta, value}]}, %Ecto.Query{} = query) do
+  defp clause_to_query({:limit, meta, [{tag, _nmeta, value}]}, %Ecto.Query{} = query)
+       when tag in ~w[integer numeric]a do
     %Ecto.Query{
       query
       | limit: %Ecto.Query.LimitExpr{
@@ -197,7 +198,8 @@ defmodule Efsql.SqlToEctoQuery do
     {:erlang.list_to_binary(part), :*}
   end
 
-  defp token_to_param({:paren, _meta, [{:quote, _, part}, {:comma, _, [{:numeric, _, n}]}]}) do
+  defp token_to_param({:paren, _meta, [{:quote, _, part}, {:comma, _, [{tag, _, n}]}]})
+       when tag in ~w[integer numeric]a do
     {:erlang.list_to_binary(part), EctoFoundationDB.Versionstamp.from_integer(:erlang.list_to_integer(n))}
   end
 

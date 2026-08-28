@@ -26,10 +26,10 @@ defmodule Efsql.MixProject do
 
   defp deps do
     [
-      {:ecto_foundationdb, path: "../ecto_foundationdb"},
+      {:ecto_foundationdb, github: "foundationdb-beam/ecto_foundationdb"},
+      {:ex_fdbmonitor, github: "foundationdb-beam/ex_fdbmonitor", only: :dev, runtime: false},
       {:sql, github: "elixir-dbvisor/sql"},
-      {:owl, "~> 0.13"},
-      {:ex_fdbmonitor, "~> 0.1", only: :dev, runtime: false}
+      {:owl, "~> 0.13"}
     ]
   end
 
