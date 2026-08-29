@@ -52,15 +52,26 @@ defmodule EfsqlTest.Integration.Planner do
     assert plan.ops == []
   end
 
-  test "order on a non-indexed field is sorted by efsql", context do
+  test "order on the schemaless pk is served natively by a key scan", context do
     tenant_id = context[:tenant_id]
 
     plan = plan("select id from #{tenant_id}.users order by id desc limit 2;")
 
+    assert {:index_scan, query = %Ecto.Query{wheres: []}, _opts} = plan.access
+    assert [%Ecto.Query.ByExpr{expr: [desc: _]}] = query.order_bys
+    assert %Ecto.Query.LimitExpr{expr: 2} = query.limit
+    assert plan.ops == []
+  end
+
+  test "order on a non-indexed, non-pk field is sorted by efsql", context do
+    tenant_id = context[:tenant_id]
+
+    plan = plan("select id, notes from #{tenant_id}.users order by notes desc limit 2;")
+
     assert {:pk_range, query = %Ecto.Query{}, nil, nil, _opts} = plan.access
     assert query.order_bys == []
     assert query.limit == nil
-    assert [{:sort, [desc: :id]}, {:limit, 2}] = plan.ops
+    assert [{:sort, [desc: :notes]}, {:limit, 2}] = plan.ops
   end
 
   test "in on an indexed field fans out to a union", context do

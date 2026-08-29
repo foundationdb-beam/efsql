@@ -9,6 +9,9 @@ defmodule Efsql.Physical do
       nil bounds are open (a full table scan is `{:pk_range, q, nil, nil, o}`)
     * `{:index_scan, ecto_query, options}` — `Repo.all`; the adapter selects
       the index, and serves any order_bys/limit left in the query natively
+    * `{:all_from_source, ecto_query, options}` — `Repo.all_from_source`;
+      same planning as `:index_scan` but returns full data objects, used for
+      `select *` (the query carries no Ecto select)
     * `{:union, [access_node]}` — executes the nodes concurrently through the
       adapter's pipelining and concatenates their rows
 

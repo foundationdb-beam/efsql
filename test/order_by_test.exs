@@ -55,6 +55,13 @@ defmodule EfsqlTest.Integration.OrderBy do
              Efsql.all("select id, notes from #{tenant_id}.users order by notes desc, id asc;")
   end
 
+  test "order by pk descending with limit", context do
+    tenant_id = context[:tenant_id]
+
+    assert [%{id: "0003"}, %{id: "0002"}] =
+             Efsql.all("select id from #{tenant_id}.users order by id desc limit 2;")
+  end
+
   test "order by combined with a where clause", context do
     tenant_id = context[:tenant_id]
 

@@ -1,8 +1,8 @@
 %{
   "decimal": {:hex, :decimal, "3.1.1", "430d87b04011ce6cbd4fd205be758311a81f87d552d40904abd00f015935b1d0", [:mix], [], "hexpm", "c5f25f2ced74a0587d03e6023f595db8e924c9d3922c8c8ffd9edfc4498cf1f6"},
   "dgen": {:hex, :dgen, "0.4.0", "76dfb552541f1b36f0f5467f997cad4a6966b6c93ba6c5742722dbf560035d4e", [:mix, :rebar3], [{:erlfdb, "~> 1.0", [hex: :erlfdb, repo: "hexpm", optional: true]}], "hexpm", "aab30d7584a0c06c17ae919b7ba7883a10f73a0bed1bb948613bb0be8304e879"},
-  "ecto": {:hex, :ecto, "3.14.2", "99db28a864293a789c970651de711e3cae184291e0e7ea1166c54055ac41c1f3", [:mix], [{:decimal, "~> 3.0", [hex: :decimal, repo: "hexpm", optional: false]}, {:jason, "~> 1.0", [hex: :jason, repo: "hexpm", optional: true]}, {:telemetry, "~> 0.4 or ~> 1.0", [hex: :telemetry, repo: "hexpm", optional: false]}], "hexpm", "25d60b8c816a07d19d85b80bdf60978bd8b102209dda198d768cd7c6745339a6"},
-  "ecto_foundationdb": {:git, "https://github.com/foundationdb-beam/ecto_foundationdb.git", "71035475eeec3b72581fdb74ec2ddd9d72f0e091", []},
+  "ecto": {:hex, :ecto, "3.13.6", "352135b474f91d1ab99a1b502171d207e9db60421c9e3d0ecab4c7ab96b24d14", [:mix], [{:decimal, "~> 2.0 or ~> 3.0", [hex: :decimal, repo: "hexpm", optional: false]}, {:jason, "~> 1.0", [hex: :jason, repo: "hexpm", optional: true]}, {:telemetry, "~> 0.4 or ~> 1.0", [hex: :telemetry, repo: "hexpm", optional: false]}], "hexpm", "8afa059bc16cd2c94739ec0a11e3e5df69d828125119109bef35f20a21a76af2"},
+  "ecto_foundationdb": {:git, "https://github.com/foundationdb-beam/ecto_foundationdb.git", "2ee1b29b1c727222582853e5633766b7d85411c2", []},
   "erlexec": {:hex, :erlexec, "2.3.4", "91e8374e269d82cce0d5cbb47ebc8a4810d56474a767a5575ab22b40cf6ff5f9", [:rebar3], [], "hexpm", "ab0c6c3569a9f991fbfe6624961a88688610738589ff9dbad24db9bb27ae233b"},
   "erlfdb": {:hex, :erlfdb, "1.2.1", "dc22993e0bbe0644a6dd4e940e0b49912fdb0703ad150911051100e3ec1d433f", [:rebar3], [], "hexpm", "a58a71b9c074acd47f1d5b32f5dcf40cb491478092d98bc68e0b338bd2a0642a"},
   "ex_fdbmonitor": {:git, "https://github.com/foundationdb-beam/ex_fdbmonitor.git", "0c6dd1dcd3c520765f15e9ea07ac4b96dd98702f", []},

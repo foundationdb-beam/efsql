@@ -26,6 +26,10 @@ defmodule Efsql.Executor do
     Efsql.Repo.all(query, options)
   end
 
+  defp fetch({:all_from_source, query, options}) do
+    Efsql.Repo.all_from_source(query, options)
+  end
+
   defp fetch({:union, nodes}) do
     nodes
     |> Enum.map(&async_fetch/1)
@@ -39,6 +43,10 @@ defmodule Efsql.Executor do
 
   defp async_fetch({:index_scan, query, options}) do
     Efsql.Repo.async_all(query, options)
+  end
+
+  defp async_fetch({:all_from_source, query, options}) do
+    Efsql.Repo.async_all_from_source(query, options)
   end
 
   # -- operators --

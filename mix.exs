@@ -27,6 +27,9 @@ defmodule Efsql.MixProject do
   defp deps do
     [
       {:ecto_foundationdb, github: "foundationdb-beam/ecto_foundationdb"},
+      # Track the Ecto version ecto_foundationdb itself is developed against;
+      # advance them together.
+      {:ecto, "~> 3.13.0"},
       {:ex_fdbmonitor, github: "foundationdb-beam/ex_fdbmonitor", only: :dev, runtime: false},
       {:sql, github: "elixir-dbvisor/sql"},
       {:owl, "~> 0.13"}

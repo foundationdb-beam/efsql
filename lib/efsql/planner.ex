@@ -9,18 +9,14 @@ defmodule Efsql.Planner do
   everything else becomes a `{:filter, ...}` operator.
 
   Ordering is pushed to the adapter when it can serve it natively — a single
-  sort field that is the first index field after the pushed equalities (the
-  adapter then scans the index in sort order, honoring the limit without
-  pulling the full result set). Otherwise a `{:sort, ...}` operator sorts
-  after the pull. The adapter's native ordering for schemaless primary-key
-  scans is not usable (it requires a schema), so `order by <pk>` is always
-  sorted client-side.
+  sort field that is either the schemaless primary key `:id` on a scan, or
+  the first index field after the pushed equalities (the adapter then scans
+  in sort order, honoring the limit without pulling the full result set).
+  Otherwise a `{:sort, ...}` operator sorts after the pull.
 
-  `select *` cannot be expressed through `Repo.all` for schemaless sources,
-  so it is only supported where `Repo.all_range` serves the query: primary
-  key constraints (including `_ in` fan-out) and whole-table queries with no
-  where clause. Field constraints with `select *` are rejected rather than
-  silently falling back to a full-table scan.
+  `select *` behaves like any field list: index-constrained queries are
+  served by `Repo.all_from_source` (full data objects, no Ecto select
+  required), pk constraints by `Repo.all_range`.
   """
 
   alias Efsql.Exception.Unsupported
@@ -41,13 +37,6 @@ defmodule Efsql.Planner do
       else
         []
       end
-
-    if star? and pks == [] and
-         (pushables != [] or residuals != [] or
-            Enum.any?(ins, fn {:in, field, _} -> field != @pk_field end)) do
-      raise Unsupported,
-            "SELECT * is not supported for index queries; select explicit fields instead"
-    end
 
     cond do
       pks != [] ->
@@ -85,20 +74,18 @@ defmodule Efsql.Planner do
   # -- SELECT planning --
 
   defp plan_select(logical, options, pushables, residuals, indexes, star?) do
-    {idx, pushed, rest} =
-      if star?, do: {nil, [], pushables}, else: choose_index(indexes, pushables)
-
+    {idx, pushed, rest} = choose_index(indexes, pushables)
     residual = rest ++ residuals
 
     cond do
-      native_sort?(logical.order, residual, star?, idx, pushed, indexes) ->
-        native_sorted_plan(logical, options, pushed)
+      native_sort?(logical.order, residual, idx, pushed, indexes) ->
+        native_sorted_plan(logical, options, pushed, star?)
 
       pushed != [] ->
         assemble(
           logical,
           options,
-          fn q, opts -> {:index_scan, put_wheres(q, pushed), opts} end,
+          fn q, opts -> scan_node(star?, put_wheres(q, pushed), opts) end,
           residual,
           true
         )
@@ -108,30 +95,39 @@ defmodule Efsql.Planner do
     end
   end
 
+  # Repo.all needs an Ecto select, which a schemaless source can only
+  # express as an explicit field list; star queries use Repo.all_from_source
+  # instead, which returns full data objects.
+  defp scan_node(true = _star?, query, options), do: {:all_from_source, query, options}
+  defp scan_node(false = _star?, query, options), do: {:index_scan, query, options}
+
   # Adapter-native ordering: single sort field, nothing filtered after the
-  # pull (else the pushed limit would be wrong), a select the adapter can
-  # execute, and a sort field the chosen index scan actually delivers in
-  # order — the first index field not pinned by an equality.
-  defp native_sort?([{_dir, field}], [] = _residual, false = _star?, idx, pushed, indexes) do
+  # pull (else the pushed limit would be wrong), and a sort field the scan
+  # actually delivers in order — the schemaless primary key `:id` or an
+  # index's first field on an unconstrained scan, or the first index field
+  # not pinned by an equality on an index scan.
+  defp native_sort?([{_dir, field}], [] = _residual, idx, pushed, indexes) do
     if idx == nil do
-      Enum.any?(indexes, fn ix -> List.first(ix[:fields]) == field end)
+      field == :id or Enum.any?(indexes, fn ix -> List.first(ix[:fields]) == field end)
     else
       equal_fields = for {:cmp, :==, f, _v} <- pushed, do: f
       List.first(idx[:fields] -- equal_fields) == field
     end
   end
 
-  defp native_sort?(_sort, _residual, _star?, _idx, _pushed, _indexes), do: false
+  defp native_sort?(_sort, _residual, _idx, _pushed, _indexes), do: false
 
-  defp native_sorted_plan(logical, options, pushed) do
+  defp native_sorted_plan(logical, options, pushed, star?) do
+    take = if logical.projection == :star, do: nil, else: logical.projection
+
     query =
       base_query(logical)
-      |> put_select(logical.projection)
+      |> put_select(take)
       |> put_wheres(pushed)
       |> put_order(logical.order)
       |> put_limit(logical.limit)
 
-    %Plan{access: {:index_scan, query, options}, ops: []}
+    %Plan{access: scan_node(star?, query, options), ops: []}
   end
 
   # -- index selection --
@@ -217,22 +213,22 @@ defmodule Efsql.Planner do
 
     fanout_ok? =
       in_field == @pk_field or
-        (not star? and Enum.any?(indexes, fn idx -> List.first(idx[:fields]) == in_field end))
+        Enum.any?(indexes, fn idx -> List.first(idx[:fields]) == in_field end)
 
     if fanout_ok? do
-      assemble(logical, options, &union_access(in_field, values, &1, &2), residual, false)
+      assemble(logical, options, &union_access(in_field, values, star?, &1, &2), residual, false)
     else
       full_scan(logical, options, [in_pred | residual])
     end
   end
 
-  defp union_access(field, values, query, options) do
+  defp union_access(field, values, star?, query, options) do
     nodes =
       Enum.map(values, fn value ->
         if field == @pk_field do
           pk_access({:cmp, :==, @pk_field, value}, query, options)
         else
-          {:index_scan, put_wheres(query, [{:cmp, :==, field, value}]), options}
+          scan_node(star?, put_wheres(query, [{:cmp, :==, field, value}]), options)
         end
       end)
 

@@ -234,6 +234,10 @@ defmodule Efsql.Cli do
     "Repo.all(\n  #{inspect(query, pretty: true)},\n  #{inspect(options)}\n)"
   end
 
+  defp access_msg({:all_from_source, query, options}) do
+    "Repo.all_from_source(\n  #{inspect(query, pretty: true)},\n  #{inspect(options)}\n)"
+  end
+
   defp access_msg({:union, nodes}) do
     nodes
     |> Enum.map(&access_msg/1)
