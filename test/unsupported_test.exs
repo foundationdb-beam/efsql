@@ -3,11 +3,19 @@ defmodule EfsqlTest.Integration.Unsupported do
 
   alias Efsql.Exception.Unsupported
 
-  test "select * raises for index queries", context do
+  test "order by the pk placeholder raises", context do
     tenant_id = context[:tenant_id]
 
-    assert_raise(Unsupported, ~r/SELECT \* is not supported for index queries/, fn ->
-      Efsql.all("select * from #{tenant_id}.users where name = 'Alice';")
+    assert_raise(Unsupported, ~r/order by '_' is not supported/, fn ->
+      Efsql.all("select id from #{tenant_id}.users order by _;")
+    end)
+  end
+
+  test "multiple primary key constraints raise", context do
+    tenant_id = context[:tenant_id]
+
+    assert_raise(Unsupported, ~r/at most one constraint on the primary key/, fn ->
+      Efsql.all("select id from #{tenant_id}.users where _ = '0001' and _ = '0002';")
     end)
   end
 end

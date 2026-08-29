@@ -221,14 +221,24 @@ defmodule Efsql.Cli do
   defp format_value({:versionstamp, _, _, _} = v), do: to_string(EctoFoundationDB.Versionstamp.to_integer(v))
   defp format_value(v), do: inspect(v)
 
-  defp print_debug({:all_range, query, id_a, id_b, options}) do
-    msg = "Repo.all_range(\n  #{inspect(query, pretty: true)},\n  #{inspect(id_a)},\n  #{inspect(id_b)},\n  #{inspect(options)}\n)"
+  defp print_debug(plan = %Efsql.Physical.Plan{}) do
+    msg = "#{access_msg(plan.access)}\nefsql ops: #{inspect(plan.ops)}"
     Owl.IO.puts(Owl.Data.tag(msg, :light_black))
   end
 
-  defp print_debug({:all, query, options}) do
-    msg = "Repo.all(\n  #{inspect(query, pretty: true)},\n  #{inspect(options)}\n)"
-    Owl.IO.puts(Owl.Data.tag(msg, :light_black))
+  defp access_msg({:pk_range, query, id_a, id_b, options}) do
+    "Repo.all_range(\n  #{inspect(query, pretty: true)},\n  #{inspect(id_a)},\n  #{inspect(id_b)},\n  #{inspect(options)}\n)"
+  end
+
+  defp access_msg({:index_scan, query, options}) do
+    "Repo.all(\n  #{inspect(query, pretty: true)},\n  #{inspect(options)}\n)"
+  end
+
+  defp access_msg({:union, nodes}) do
+    nodes
+    |> Enum.map(&access_msg/1)
+    |> Enum.join("\n")
+    |> then(&"async union (#{length(nodes)}):\n#{&1}")
   end
 
   defp print_error(term) do
