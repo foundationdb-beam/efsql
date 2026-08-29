@@ -172,6 +172,19 @@ defmodule Efsql.Tui.AppTest do
     assert model.mode == :query
   end
 
+  test "uuid primary keys are not truncated in results" do
+    model = %{activated() | mode: :query}
+    uuid = "00ab2aa8-2bba-4102-bf8c-ced5d3142f8a"
+    rows = [%{id: uuid, item: "widget"}]
+
+    plan = %Efsql.Physical.Plan{access: {:pk_range, nil, nil, nil, []}, ops: []}
+    {model, _} = feed(model, [{:done, :query, {:ok, {plan, rows, %{}, 1}}}])
+
+    text = frame_text(model)
+    assert text =~ uuid
+    refute text =~ "ced5d3142f8…"
+  end
+
   test "errors surface in the bottom bar" do
     model = %{activated() | mode: :query}
 
