@@ -40,4 +40,16 @@ defmodule Efsql.RenderTest do
     assert Render.type_of(~N[2026-01-01 00:00:00]) == :naive_datetime
     assert Render.type_of(%{}) == :map
   end
+
+  test "structs are named after their module" do
+    assert Render.type_of(URI.parse("https://example.com")) == :URI
+    assert Render.type_of(MapSet.new([1])) == :MapSet
+  end
+
+  test "structs render with their name, elided in cells and full in the inspector" do
+    uri = URI.parse("https://example.com/a?b=1")
+    assert Render.cell(uri, 30) |> String.starts_with?("%URI{")
+    assert String.length(Render.cell(uri, 30)) <= 30
+    assert Render.full(uri) =~ "scheme:"
+  end
 end

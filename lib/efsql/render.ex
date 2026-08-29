@@ -59,6 +59,11 @@ defmodule Efsql.Render do
   def type_of(%Date{}), do: :date
   def type_of(%Time{}), do: :time
   def type_of(%Decimal{}), do: :decimal
+
+  # Name other structs after their module, so schema discovery distinguishes
+  # a plain map from, say, an Address.
+  def type_of(%mod{}), do: mod |> Module.split() |> List.last() |> String.to_atom()
+
   def type_of(v) when is_map(v), do: :map
   def type_of(v) when is_list(v), do: :list
 
