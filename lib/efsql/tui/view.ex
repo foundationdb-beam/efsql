@@ -71,11 +71,12 @@ defmodule Efsql.Tui.View do
   defp bottom_bar(%Model{mode: mode, qfocus: qfocus}, _cols) do
     hints =
       case {mode, qfocus} do
-        {:navigator, _} -> "↑↓ move · type to filter · Enter open · Esc back · ^D quit"
-        {:schema, _} -> "↑↓ move · Enter open · q query · t tenants · r resample · ^D quit"
-        {:query, :input} -> "Enter run · Tab complete (empty: results) · ↑↓ history · Esc schema · \\plan"
+        {:navigator, _} -> "↑↓ move · type to filter · Enter open · ? help · ^D quit"
+        {:schema, _} -> "↑↓ move · Enter open · q query · t tenants · r resample · ? help"
+        {:query, :input} -> "Enter run · Tab complete · ↑↓ history · Esc schema · \\? help · \\plan"
         {:query, :results} -> "↑↓ move · Enter inspect · Tab/Esc back to input"
-        {:inspector, _} -> "↑↓ field · Esc back"
+        {:inspector, _} -> "↑↓ field · Esc back · ? help"
+        {:help, _} -> "↑↓ scroll · Esc back"
       end
 
     [{:dim, " " <> hints}]
@@ -87,6 +88,22 @@ defmodule Efsql.Tui.View do
   defp content(%Model{mode: :schema} = model, height, cols), do: {schema(model, height, cols), nil}
   defp content(%Model{mode: :query} = model, height, cols), do: query(model, height, cols)
   defp content(%Model{mode: :inspector} = model, height, cols), do: {inspector(model, height, cols), nil}
+  defp content(%Model{mode: :help} = model, height, _cols), do: {help(model, height), nil}
+
+  # -- help --
+
+  defp help(%Model{help_scroll: scroll}, height) do
+    lines = Efsql.Tui.Help.lines()
+    max_scroll = max(length(lines) - height, 0)
+    scroll = min(scroll, max_scroll)
+    shown = Enum.slice(lines, scroll, height)
+
+    if scroll < max_scroll do
+      Enum.take(shown, height - 1) ++ [[{:dim, " ↓ more"}]]
+    else
+      shown
+    end
+  end
 
   # -- navigator --
 

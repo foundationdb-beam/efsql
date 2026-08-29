@@ -54,7 +54,10 @@ defmodule Efsql.Tui.App do
               completion: nil,
               # inspector
               irow: nil,
-              ifield_cursor: 0
+              ifield_cursor: 0,
+              # help
+              help_scroll: 0,
+              help_return: :schema
   end
 
   def init(opts) do
@@ -85,12 +88,39 @@ defmodule Efsql.Tui.App do
   # While a task runs, only the global keys above are live.
   def update(%Model{busy: busy} = model, _msg) when busy != nil, do: {model, []}
 
+  # `?` is a plain character in the query editor, so there it is reached with
+  # the \? command instead.
+  def update(%Model{mode: mode} = model, {:char, "?"}) when mode != :query and mode != :help do
+    {%{model | mode: :help, help_return: mode, help_scroll: 0}, []}
+  end
+
+  def update(%Model{mode: :help} = model, msg), do: help(clear_flash(model), msg)
   def update(%Model{mode: :navigator} = model, msg), do: navigator(clear_flash(model), msg)
   def update(%Model{mode: :schema} = model, msg), do: schema(clear_flash(model), msg)
   def update(%Model{mode: :query} = model, msg), do: query(clear_flash(model), msg)
   def update(%Model{mode: :inspector} = model, msg), do: inspector(clear_flash(model), msg)
 
   defp clear_flash(model), do: %{model | flash: nil}
+
+  # -- help --
+
+  defp help(model, {:key, key}) when key in [:esc, :enter], do: {%{model | mode: model.help_return}, []}
+  defp help(model, {:char, c}) when c in ["q", "?"], do: {%{model | mode: model.help_return}, []}
+
+  defp help(model, msg) do
+    delta =
+      case msg do
+        {:key, :up} -> -1
+        {:char, "k"} -> -1
+        {:key, :down} -> 1
+        {:char, "j"} -> 1
+        {:key, :page_up} -> -10
+        {:key, :page_down} -> 10
+        _ -> 0
+      end
+
+    {%{model | help_scroll: max(model.help_scroll + delta, 0)}, []}
+  end
 
   # -- navigator --
 
@@ -341,6 +371,7 @@ defmodule Efsql.Tui.App do
   defp query(%Model{input: input} = model, {:key, :enter}) do
     case String.trim(input) do
       "" -> {model, []}
+      "\\?" -> {%{model | mode: :help, help_return: :query, help_scroll: 0, input: "", qcursor: 0}, []}
       "\\plan" -> {%{model | show_plan?: not model.show_plan?, input: "", qcursor: 0}, []}
       "\\set limit " <> n -> set_limit(model, n)
       sql -> run_query(model, sql)

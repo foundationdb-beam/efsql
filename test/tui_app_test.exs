@@ -181,6 +181,60 @@ defmodule Efsql.Tui.AppTest do
     assert frame_text(model) =~ "'or' is not supported"
   end
 
+  test "? opens help from browsing modes and returns where it came from" do
+    model = activated()
+
+    {help, _} = feed(model, [{:char, "?"}])
+    assert help.mode == :help
+    assert help.help_return == :schema
+
+    text = frame_text(help)
+    # the constructions that have no standard SQL equivalent
+    assert text =~ "primary key"
+    assert text =~ "_ = 'u0001'"
+
+    {back, _} = feed(help, [{:key, :esc}])
+    assert back.mode == :schema
+  end
+
+  test "\\? opens help from the query editor and returns to it" do
+    model = %{activated() | mode: :query}
+
+    {help, _} = feed(model, chars("\\?") ++ [{:key, :enter}])
+    assert help.mode == :help
+    assert help.help_return == :query
+    assert help.input == ""
+
+    {back, _} = feed(help, [{:key, :esc}])
+    assert back.mode == :query
+  end
+
+  test "? is a plain character in the query editor" do
+    model = %{activated() | mode: :query}
+
+    {typed, _} = feed(model, chars("where name like 'a?'"))
+    assert typed.mode == :query
+    assert typed.input == "where name like 'a?'"
+  end
+
+  test "help scrolls and clamps, and documents versionstamp partitions" do
+    model = activated()
+    {help, _} = feed(model, [{:char, "?"}])
+
+    # scrolling up at the top stays put
+    {up, _} = feed(help, [{:key, :up}, {:key, :up}])
+    assert up.help_scroll == 0
+
+    {down, _} = feed(help, [{:key, :page_down}])
+    assert down.help_scroll == 10
+    assert length(frame(down)) == 16
+
+    # the whole page is reachable by scrolling
+    all = for s <- 0..40, do: frame_text(%{help | help_scroll: s})
+    assert Enum.any?(all, &(&1 =~ "('u0006', *)"))
+    assert Enum.any?(all, &(&1 =~ "or is not supported"))
+  end
+
   test "ctrl-c cancels a running task before quitting" do
     model = %{init() | busy: "running query"}
 
