@@ -5,12 +5,23 @@ defmodule Efsql.MixProject do
     [
       app: :efsql,
       version: "0.1.0",
+      description: "SQL frontend and data explorer for FoundationDB",
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       elixirc_paths: elixirc_paths(Mix.env()),
       releases: releases(),
-      aliases: aliases()
+      aliases: aliases(),
+      package: package()
+    ]
+  end
+
+  defp package() do
+    [
+      licenses: ["Apache-2.0"],
+      links: %{
+        "GitHub" => "https://github.com/foundationdb-beam/efsql"
+      }
     ]
   end
 
