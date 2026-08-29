@@ -74,7 +74,10 @@ defmodule Efsql do
             raise Efsql.Exception.Unsupported, "Tenant '#{tenant_name}' does not exist"
           end
 
-          t = EctoFoundationDB.Tenant.open(Efsql.Repo, tenant_name, open_opts)
+          # migrate: false keeps this read-only. Tenant.open/3 already requires
+          # the tenant to exist (only open!/3 creates), so with the migration
+          # step skipped efsql never writes to the database it is exploring.
+          t = EctoFoundationDB.Tenant.open(Efsql.Repo, tenant_name, [migrate: false] ++ open_opts)
           {t, Map.put(tenants, cache_key, t)}
       end
 

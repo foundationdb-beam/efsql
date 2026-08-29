@@ -199,7 +199,12 @@ defmodule Efsql.Tui.App do
         raise "Tenant '#{tenant_id}' does not exist"
       end
 
-      tenant = EctoFoundationDB.Tenant.open(Efsql.Repo, tenant_id, storage_id: storage_id)
+      # migrate: false — see Efsql.resolve_tenant/2; the TUI never writes.
+      tenant =
+        EctoFoundationDB.Tenant.open(Efsql.Repo, tenant_id,
+          storage_id: storage_id,
+          migrate: false
+        )
       {storage_id, tenant_id, tenant}
     end
 

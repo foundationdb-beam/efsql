@@ -234,11 +234,13 @@ One module (`Efsql.Render`) used by every pane:
   the existing executor, `:erlfdb_directory.list`, snapshot `get_range`
   reads for discovery, and `Metadata.transactional` (reads with a version
   check).
-- One known write-shaped edge: `Tenant.open` runs ecto_fdb's open path
-  (migration check; `Efsql.Repo.migrations/0` is `[]`). We keep today's
-  `exists?`-guarded open so nothing is ever created, and we never call
-  `Tenant.open!`/`create`. A true `open_readonly` in ecto_fdb is
-  **deliberately deferred** — the guarded open is sufficient for now.
+- Tenants are opened with `Tenant.open(repo, id, migrate: false)`.
+  `open/3` requires the tenant to already exist (only `open!/3` creates),
+  and `migrate: false` skips the migration step, so opening is a pure read.
+  We never call `Tenant.open!`/`create`. The `exists?` guard stays for the
+  friendlier error message. Note the trade-off ecto_fdb documents: a tenant
+  opened this way may be missing indexes the owning app would have created
+  — which is what a read-only explorer should show anyway.
 - No delete/clear/set APIs are linked anywhere in the TUI modules; a test
   asserts the TUI module tree has no references to writing Repo/erlfdb
   functions (cheap tripwire against regressions).
@@ -278,5 +280,5 @@ Each lands independently; the line CLI remains the default until M2.
 - **Decided — caches persist**: discovery results persist across sessions
   under `~/.efsql/cache/`, with sample age always visible and re-sampling
   manual (§3.3).
-- **Decided — open_readonly deferred**: the `exists?`-guarded `Tenant.open`
-  stands; no upstream work now (§6).
+- **Resolved — read-only open**: ecto_fdb added `migrate: false` to
+  `Tenant.open`, which efsql now uses; read paths never write (§6).
