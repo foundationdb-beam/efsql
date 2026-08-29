@@ -28,3 +28,6 @@ efsql-*.tar
 .elixir_ls
 dev-efsql
 .ex_fdbmonitor
+
+# Local dev launcher; also the name mix escript.build would write here.
+/efsql
