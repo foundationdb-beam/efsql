@@ -51,7 +51,10 @@ defmodule Efsql do
     {:ok, context, tokens} = SQL.Lexer.lex(sql)
     {:ok, _context, parsed} = SQL.Parser.parse(tokens, context)
     logical = %Efsql.Logical.Select{} = Efsql.Parser.to_logical(parsed)
+    resolve_tenant(logical, tenants)
+  end
 
+  def resolve_tenant(%Efsql.Logical.Select{} = logical, tenants) do
     {tenant_name, open_opts} =
       case logical.prefix do
         {storage_id, tenant_name} -> {tenant_name, [storage_id: storage_id]}

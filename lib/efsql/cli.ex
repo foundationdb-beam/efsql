@@ -10,9 +10,8 @@ defmodule Efsql.Cli do
 
     IO.puts("Connected to #{cluster_file}")
     args = if System.get_env("EFSQL_DEBUG") == "true", do: [debug: true], else: []
-    {:ok, pid} = GenServer.start_link(__MODULE__, args)
-    mref = Process.monitor(pid)
-    wait_for_down(pid, mref)
+    args = if System.get_env("EFSQL_NO_TUI") == "true", do: [{:tui, false} | args], else: args
+    start_ui(args)
     System.halt(0)
   end
 
@@ -20,11 +19,31 @@ defmodule Efsql.Cli do
     {args, _, _} =
       OptionParser.parse(args,
         aliases: [C: :cluster_file],
-        strict: [cluster_file: :string, storage_id: :string, debug: :boolean]
+        strict: [cluster_file: :string, storage_id: :string, debug: :boolean, tui: :boolean]
       )
 
     init_ecto_foundationdb!(args)
+    start_ui(args)
+  end
 
+  # The full-screen TUI is the default on a tty; a pipe, --no-tui, or a
+  # node that already runs a shell (iex) gets the line REPL.
+  defp start_ui(args) do
+    if Keyword.get(args, :tui, true) and Efsql.Tui.Term.tty?() do
+      case Efsql.Tui.run(args) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          IO.puts("TUI unavailable (#{inspect(reason)}); using line mode")
+          line_repl(args)
+      end
+    else
+      line_repl(args)
+    end
+  end
+
+  defp line_repl(args) do
     {:ok, pid} = GenServer.start_link(__MODULE__, args)
     mref = Process.monitor(pid)
     wait_for_down(pid, mref)
@@ -145,21 +164,27 @@ defmodule Efsql.Cli do
   end
 
   def init_ecto_foundationdb!(args) do
-    cluster_file = get_cluster_file(args)
-    storage_id = get_storage_id(args)
+    if Efsql.DevSandbox.enabled?() do
+      # the application boots (or already booted) its own sandbox database
+      {:ok, _} = Application.ensure_all_started(:efsql)
+      IO.puts("Connected to dev sandbox")
+    else
+      cluster_file = get_cluster_file(args)
+      storage_id = get_storage_id(args)
 
-    opts =
-      [cluster_file: cluster_file, storage_id: storage_id]
-      |> Enum.filter(fn
-        {_, nil} -> false
-        _ -> true
-      end)
+      opts =
+        [cluster_file: cluster_file, storage_id: storage_id]
+        |> Enum.filter(fn
+          {_, nil} -> false
+          _ -> true
+        end)
 
-    Application.put_env(:efsql, Efsql.Repo, opts)
+      Application.put_env(:efsql, Efsql.Repo, opts)
 
-    {:ok, _} = Application.ensure_all_started(:efsql)
+      {:ok, _} = Application.ensure_all_started(:efsql)
 
-    IO.puts("Connected to #{cluster_file}")
+      IO.puts("Connected to #{cluster_file}")
+    end
   end
 
   defp get_cluster_file(args) do
