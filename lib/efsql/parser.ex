@@ -145,6 +145,16 @@ defmodule Efsql.Parser do
     :erlang.list_to_binary(value)
   end
 
+  defp param({:integer, _meta, value}), do: :erlang.list_to_integer(value)
+
+  defp param({:numeric, _meta, value}) do
+    value |> :erlang.list_to_binary() |> String.to_float()
+  end
+
+  defp param({true, _meta, []}), do: true
+  defp param({false, _meta, []}), do: false
+  defp param({nil, _meta, []}), do: nil
+
   defp param({:paren, _meta, [{:quote, _, part}, {:comma, _, [{:*, _, []}]}]}) do
     {:erlang.list_to_binary(part), :*}
   end

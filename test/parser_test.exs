@@ -97,6 +97,23 @@ defmodule Efsql.ParserTest do
                parse("select id from t.users where name in ('a', 'b', 'c');")
     end
 
+    test "numeric and boolean literals" do
+      assert %Logical.Select{predicates: [{:cmp, :>, :age, 40}]} =
+               parse("select id from t.users where age > 40;")
+
+      assert %Logical.Select{predicates: [{:cmp, :>, :score, 1.5}]} =
+               parse("select id from t.users where score > 1.5;")
+
+      assert %Logical.Select{predicates: [{:cmp, :==, :active, true}]} =
+               parse("select id from t.users where active = true;")
+
+      assert %Logical.Select{predicates: [{:range, :age, {:>=, 30}, {:<=, 40}}]} =
+               parse("select id from t.users where age between 30 and 40;")
+
+      assert %Logical.Select{predicates: [{:in, :qty, [1, 2, 3]}]} =
+               parse("select id from t.users where qty in (1, 2, 3);")
+    end
+
     test "versionstamp partition scan value" do
       assert %Logical.Select{predicates: [{:cmp, :==, :_, {"p", :*}}]} =
                parse("select id from t.users where _ = ('p', *);")
