@@ -201,7 +201,7 @@ jobs:
           find artifacts -type f \( -name '*.tar.gz' -o -name '*.deb' \) -exec mv {} dist/ \;
           cd dist
           # List extensions explicitly so the checksum file cannot include itself.
-          sha256sum *.tar.gz *.deb > SHA256SUMS
+          sha256sum -- *.tar.gz *.deb > SHA256SUMS
           cat SHA256SUMS
 
       - name: Create release
