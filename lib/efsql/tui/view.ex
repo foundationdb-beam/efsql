@@ -80,7 +80,7 @@ defmodule Efsql.Tui.View do
         {:schema, _} -> "↑↓ move · Enter open · q query · t tenants · r resample · ? help"
         {:query, :input} -> "Enter run · Tab complete · ↑↓ history · Esc schema · \\? help · \\plan"
         {:query, :results} -> "↑↓ move · Enter inspect · Tab/Esc back to input"
-        {:inspector, _} -> "↑↓ field · Esc back · ? help"
+        {:inspector, _} -> "↑↓ field · PgUp/PgDn scroll value · Esc back · ? help"
         {:help, _} -> "↑↓ scroll · Esc back"
       end
 
@@ -326,13 +326,30 @@ defmodule Efsql.Tui.View do
         pad(" #{f}", 20) <> Render.cell(Map.get(row, f), cols - 24)
       end)
 
-    value =
+    lines =
       Map.get(row, selected)
       |> Render.full(cols - 4)
       |> Render.wrap(cols - 4)
+
+    # " Row" + the field list + a blank + the field-name header
+    value_height = max(height - length(list) - 3, 1)
+    max_scroll = max(length(lines) - value_height, 0)
+    scroll = min(model.ivalue_scroll, max_scroll)
+
+    value =
+      lines
+      |> Enum.slice(scroll, value_height)
       |> Enum.map(&[{:none, "  " <> &1}])
 
-    [[{:head, " Row"}]] ++ list ++ [[], [{:head, " #{selected}"}]] ++ value
+    header =
+      if max_scroll > 0 do
+        shown_to = min(scroll + value_height, length(lines))
+        [{:head, " #{selected}"}, {:dim, "  lines #{scroll + 1}-#{shown_to} of #{length(lines)} · PgUp/PgDn"}]
+      else
+        [{:head, " #{selected}"}]
+      end
+
+    [[{:head, " Row"}]] ++ list ++ [[], header] ++ value
   end
 
   # -- helpers --

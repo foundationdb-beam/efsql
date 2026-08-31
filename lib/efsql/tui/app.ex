@@ -55,6 +55,7 @@ defmodule Efsql.Tui.App do
               # inspector
               irow: nil,
               ifield_cursor: 0,
+              ivalue_scroll: 0,
               # help
               help_scroll: 0,
               help_return: :schema
@@ -502,7 +503,7 @@ defmodule Efsql.Tui.App do
   defp results(%Model{rows: rows} = model, {:key, :enter}) do
     case Enum.at(rows || [], model.row_cursor) do
       nil -> {model, []}
-      row -> {%{model | mode: :inspector, irow: row, ifield_cursor: 0}, []}
+      row -> {%{model | mode: :inspector, irow: row, ifield_cursor: 0, ivalue_scroll: 0}, []}
     end
   end
 
@@ -519,6 +520,16 @@ defmodule Efsql.Tui.App do
     {%{model | mode: :query, irow: nil}, []}
   end
 
+  # Page keys scroll the value pane; the view clamps to its real height, which
+  # only it knows. Arrows keep moving between fields.
+  defp inspector(model, {:key, :page_down}) do
+    {%{model | ivalue_scroll: model.ivalue_scroll + 10}, []}
+  end
+
+  defp inspector(model, {:key, :page_up}) do
+    {%{model | ivalue_scroll: max(model.ivalue_scroll - 10, 0)}, []}
+  end
+
   defp inspector(model, msg) do
     delta =
       case msg do
@@ -530,7 +541,11 @@ defmodule Efsql.Tui.App do
       end
 
     count = map_size(model.irow || %{})
-    {%{model | ifield_cursor: clamp(model.ifield_cursor + delta, count)}, []}
+    cursor = clamp(model.ifield_cursor + delta, count)
+
+    # a different field starts at the top of its own value
+    scroll = if cursor == model.ifield_cursor, do: model.ivalue_scroll, else: 0
+    {%{model | ifield_cursor: cursor, ivalue_scroll: scroll}, []}
   end
 
   # -- task results --

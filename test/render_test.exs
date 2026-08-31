@@ -46,6 +46,11 @@ defmodule Efsql.RenderTest do
     assert Render.type_of(MapSet.new([1])) == :MapSet
   end
 
+  test "cells collapse newlines and tabs so they stay one line" do
+    assert Render.cell("a\nb\tc", 40) == "a b c"
+    refute Render.cell("one\ntwo\nthree", 40) =~ "\n"
+  end
+
   describe "wrap" do
     test "short text is one line" do
       assert Render.wrap("hello", 20) == ["hello"]

@@ -206,6 +206,74 @@ defmodule Efsql.Tui.AppTest do
     refute Enum.any?(wrapped, &String.contains?(&1, "…"))
   end
 
+  describe "inspector value scrolling" do
+    defp inspector_with_long_value() do
+      model = %{activated() | mode: :query}
+      # 60 numbered lines, so we can tell which part of the value is on screen
+      long = Enum.map_join(1..60, "\n", &"line#{&1}")
+      plan = %Efsql.Physical.Plan{access: {:pk_range, nil, nil, nil, []}, ops: []}
+
+      {model, _} = feed(model, [{:done, :query, {:ok, {plan, [%{id: "0001", blob: long}], %{}, 1}}}])
+      {model, _} = feed(model, [{:key, :tab}, {:key, :enter}])
+      model
+    end
+
+    test "starts at the top and reports its position" do
+      model = inspector_with_long_value()
+      text = frame_text(model)
+
+      assert model.ivalue_scroll == 0
+      assert text =~ "line1"
+      assert text =~ "of 60"
+      refute text =~ "line60"
+    end
+
+    test "page down reveals later lines" do
+      {model, _} = feed(inspector_with_long_value(), [{:key, :page_down}])
+      text = frame_text(model)
+
+      assert model.ivalue_scroll == 10
+      assert text =~ "lines 11-"
+      assert text =~ "line11"
+      # the first page is no longer in the value pane
+      refute Enum.any?(frame(model), &(String.trim(&1) == "line1"))
+    end
+
+    test "page up clamps at the top" do
+      {model, _} = feed(inspector_with_long_value(), [{:key, :page_up}, {:key, :page_up}])
+      assert model.ivalue_scroll == 0
+      assert frame_text(model) =~ "line1"
+    end
+
+    test "scrolling past the end still renders a full frame" do
+      {model, _} = feed(inspector_with_long_value(), List.duplicate({:key, :page_down}, 20))
+      lines = frame(model)
+
+      assert length(lines) == 16
+      assert Enum.all?(lines, &(String.length(&1) <= 100))
+      # the view clamps to the last page rather than showing blank space
+      assert frame_text(model) =~ "line60"
+    end
+
+    test "changing field resets the scroll" do
+      {model, _} = feed(inspector_with_long_value(), [{:key, :page_down}])
+      assert model.ivalue_scroll == 10
+
+      {model, _} = feed(model, [{:key, :down}])
+      assert model.ivalue_scroll == 0
+    end
+
+    test "a value that fits shows no scroll indicator" do
+      model = %{activated() | mode: :query}
+      plan = %Efsql.Physical.Plan{access: {:pk_range, nil, nil, nil, []}, ops: []}
+      {model, _} = feed(model, [{:done, :query, {:ok, {plan, [%{id: "0001"}], %{}, 1}}}])
+      {model, _} = feed(model, [{:key, :tab}, {:key, :enter}])
+
+      # the position indicator only appears when the value overflows
+      refute frame_text(model) =~ "lines 1-"
+    end
+  end
+
   test "errors surface in the bottom bar" do
     model = %{activated() | mode: :query}
 

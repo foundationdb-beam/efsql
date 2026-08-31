@@ -8,6 +8,9 @@ defmodule Efsql.Render do
   def cell(value, width \\ 40) do
     value
     |> render(width, false)
+    # A cell is one line by contract: a value containing newlines or tabs would
+    # otherwise break the frame layout when written to the terminal.
+    |> String.replace(~r/[\r\n\t]+/, " ")
     |> truncate(width)
   end
 
