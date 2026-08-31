@@ -40,6 +40,55 @@ defmodule Efsql.Render do
     )
   end
 
+  @doc """
+  Breaks text into lines no wider than `width`, preserving existing newlines.
+  Wraps on spaces where it can and hard-breaks words that are wider than the
+  line — a long unbroken value (a token, a URL, a base64 blob) still has to
+  fit, and losing its tail to an ellipsis is worse than splitting it.
+  """
+  def wrap(text, width) when is_binary(text) and width > 0 do
+    text
+    |> String.split("\n")
+    |> Enum.flat_map(&wrap_line(&1, width))
+  end
+
+  defp wrap_line("", _width), do: [""]
+
+  defp wrap_line(line, width) do
+    if String.length(line) <= width do
+      [line]
+    else
+      line
+      |> String.split(" ")
+      |> Enum.flat_map(&split_long_word(&1, width))
+      |> fill(width)
+    end
+  end
+
+  defp split_long_word(word, width) do
+    if String.length(word) <= width do
+      [word]
+    else
+      word |> String.graphemes() |> Enum.chunk_every(width) |> Enum.map(&Enum.join/1)
+    end
+  end
+
+  defp fill(words, width) do
+    words
+    |> Enum.reduce([], fn
+      word, [] ->
+        [word]
+
+      word, [current | rest] ->
+        if String.length(current) + 1 + String.length(word) <= width do
+          [current <> " " <> word | rest]
+        else
+          [word, current | rest]
+        end
+    end)
+    |> Enum.reverse()
+  end
+
   def truncate(string, width) do
     if String.length(string) > width do
       String.slice(string, 0, max(width - 1, 0)) <> "…"

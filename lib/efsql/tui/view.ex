@@ -329,7 +329,7 @@ defmodule Efsql.Tui.View do
     value =
       Map.get(row, selected)
       |> Render.full(cols - 4)
-      |> String.split("\n")
+      |> Render.wrap(cols - 4)
       |> Enum.map(&[{:none, "  " <> &1}])
 
     [[{:head, " Row"}]] ++ list ++ [[], [{:head, " #{selected}"}]] ++ value

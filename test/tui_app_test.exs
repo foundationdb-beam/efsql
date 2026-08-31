@@ -185,6 +185,27 @@ defmodule Efsql.Tui.AppTest do
     refute text =~ "ced5d3142f8…"
   end
 
+  test "a long single-line string wraps in the inspector instead of truncating" do
+    model = %{activated() | mode: :query}
+    long = String.duplicate("abcdefghij", 30)
+    rows = [%{id: "0001", blob: long}]
+
+    plan = %Efsql.Physical.Plan{access: {:pk_range, nil, nil, nil, []}, ops: []}
+    {model, _} = feed(model, [{:done, :query, {:ok, {plan, rows, %{}, 1}}}])
+    {model, _} = feed(model, [{:key, :tab}, {:key, :enter}])
+    assert model.mode == :inspector
+
+    lines = frame(model)
+    # every frame line still fits the terminal
+    assert Enum.all?(lines, &(String.length(&1) <= 100))
+
+    # the value pane shows several wrapped lines, not one ellipsised line
+    body = Enum.drop_while(lines, &(not String.contains?(&1, "blob"))) |> Enum.drop(1)
+    wrapped = Enum.filter(body, &String.contains?(&1, "abcdefghij"))
+    assert length(wrapped) > 1
+    refute Enum.any?(wrapped, &String.contains?(&1, "…"))
+  end
+
   test "errors surface in the bottom bar" do
     model = %{activated() | mode: :query}
 
