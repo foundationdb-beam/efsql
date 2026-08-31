@@ -12,6 +12,8 @@ defmodule Efsql.Tui.App do
 
   alias Efsql.Complete
   alias Efsql.Discover
+  alias Efsql.Render
+  alias Efsql.Tui.Help
 
   defmodule Model do
     defstruct size: {24, 80},
@@ -56,6 +58,7 @@ defmodule Efsql.Tui.App do
               irow: nil,
               ifield_cursor: 0,
               ivalue_scroll: 0,
+              ifocus: :fields,
               # help
               help_scroll: 0,
               help_return: :schema
@@ -107,21 +110,31 @@ defmodule Efsql.Tui.App do
 
   defp help(model, {:key, key}) when key in [:esc, :enter], do: {%{model | mode: model.help_return}, []}
   defp help(model, {:char, c}) when c in ["q", "?"], do: {%{model | mode: model.help_return}, []}
+  defp help(model, {:char, "g"}), do: {%{model | help_scroll: 0}, []}
+  defp help(model, {:char, "G"}), do: {%{model | help_scroll: max_help_scroll(model)}, []}
 
   defp help(model, msg) do
+    page = max(help_height(model) - 1, 1)
+
     delta =
       case msg do
         {:key, :up} -> -1
         {:char, "k"} -> -1
         {:key, :down} -> 1
         {:char, "j"} -> 1
-        {:key, :page_up} -> -10
-        {:key, :page_down} -> 10
+        {:key, :page_up} -> -page
+        {:key, :page_down} -> page
+        {:char, " "} -> page
+        {:char, "b"} -> -page
         _ -> 0
       end
 
-    {%{model | help_scroll: max(model.help_scroll + delta, 0)}, []}
+    scroll = (model.help_scroll + delta) |> max(0) |> min(max_help_scroll(model))
+    {%{model | help_scroll: scroll}, []}
   end
+
+  defp help_height(%Model{size: {rows, _cols}}), do: max(rows - 2, 1)
+  defp max_help_scroll(model), do: max(length(Help.lines()) - help_height(model), 0)
 
   # -- navigator --
 
@@ -503,7 +516,8 @@ defmodule Efsql.Tui.App do
   defp results(%Model{rows: rows} = model, {:key, :enter}) do
     case Enum.at(rows || [], model.row_cursor) do
       nil -> {model, []}
-      row -> {%{model | mode: :inspector, irow: row, ifield_cursor: 0, ivalue_scroll: 0}, []}
+      row ->
+        {%{model | mode: :inspector, irow: row, ifield_cursor: 0, ivalue_scroll: 0, ifocus: :fields}, []}
     end
   end
 
@@ -520,32 +534,89 @@ defmodule Efsql.Tui.App do
     {%{model | mode: :query, irow: nil}, []}
   end
 
-  # Page keys scroll the value pane; the view clamps to its real height, which
-  # only it knows. Arrows keep moving between fields.
-  defp inspector(model, {:key, :page_down}) do
-    {%{model | ivalue_scroll: model.ivalue_scroll + 10}, []}
+  # Tab moves focus between the field list and the value; arrows then act on
+  # whichever has it. Paging keys always target the value, since it is the only
+  # thing that scrolls.
+  defp inspector(model, {:key, :tab}) do
+    {%{model | ifocus: if(model.ifocus == :fields, do: :value, else: :fields)}, []}
   end
 
-  defp inspector(model, {:key, :page_up}) do
-    {%{model | ivalue_scroll: max(model.ivalue_scroll - 10, 0)}, []}
+  defp inspector(model, {:key, key}) when key in [:page_down, :page_up] do
+    {scroll_value(model, if(key == :page_down, do: page(model), else: -page(model))), []}
   end
 
-  defp inspector(model, msg) do
-    delta =
-      case msg do
-        {:key, :up} -> -1
-        {:char, "k"} -> -1
-        {:key, :down} -> 1
-        {:char, "j"} -> 1
-        _ -> 0
-      end
+  defp inspector(model, {:char, " "}), do: {scroll_value(model, page(model)), []}
+  defp inspector(model, {:char, "b"}), do: {scroll_value(model, -page(model)), []}
 
+  defp inspector(%Model{ifocus: :value} = model, {:char, "g"}), do: {%{model | ivalue_scroll: 0}, []}
+
+  defp inspector(%Model{ifocus: :value} = model, {:char, "G"}) do
+    {%{model | ivalue_scroll: max_value_scroll(model)}, []}
+  end
+
+  defp inspector(%Model{ifocus: :fields} = model, {:char, "g"}), do: {move_field(model, -model.ifield_cursor), []}
+
+  defp inspector(%Model{ifocus: :fields} = model, {:char, "G"}) do
+    {move_field(model, map_size(model.irow || %{})), []}
+  end
+
+  defp inspector(%Model{ifocus: :value} = model, msg) do
+    {scroll_value(model, line_delta(msg)), []}
+  end
+
+  defp inspector(model, msg), do: {move_field(model, line_delta(msg)), []}
+
+  defp line_delta({:key, :up}), do: -1
+  defp line_delta({:char, "k"}), do: -1
+  defp line_delta({:key, :down}), do: 1
+  defp line_delta({:char, "j"}), do: 1
+  defp line_delta(_), do: 0
+
+  defp move_field(model, delta) do
     count = map_size(model.irow || %{})
     cursor = clamp(model.ifield_cursor + delta, count)
 
     # a different field starts at the top of its own value
     scroll = if cursor == model.ifield_cursor, do: model.ivalue_scroll, else: 0
-    {%{model | ifield_cursor: cursor, ivalue_scroll: scroll}, []}
+    %{model | ifield_cursor: cursor, ivalue_scroll: scroll}
+  end
+
+  defp scroll_value(model, delta) do
+    scroll = model.ivalue_scroll + delta
+    %{model | ivalue_scroll: scroll |> max(0) |> min(max_value_scroll(model))}
+  end
+
+  # One page, keeping a line of context like a pager does.
+  defp page(model) do
+    {_lines, height} = inspector_value(model)
+    max(height - 1, 1)
+  end
+
+  defp max_value_scroll(model) do
+    {lines, height} = inspector_value(model)
+    max(length(lines) - height, 0)
+  end
+
+  @doc """
+  The wrapped lines of the selected value and how many of them fit on screen.
+  Lives here so the scroll clamping and the view agree on one layout.
+  """
+  def inspector_value(%Model{irow: nil}), do: {[], 1}
+
+  def inspector_value(%Model{irow: row, size: {rows, cols}} = model) do
+    fields = row |> Map.keys() |> Enum.sort()
+    selected = Enum.at(fields, model.ifield_cursor)
+
+    lines =
+      row
+      |> Map.get(selected)
+      |> Render.full(cols - 4)
+      |> Render.wrap(cols - 4)
+
+    height = max(rows - 2, 1)
+    list_height = min(length(fields), div(height, 2))
+    # " Row" + the field list + a blank + the field-name header
+    {lines, max(height - list_height - 3, 1)}
   end
 
   # -- task results --

@@ -73,19 +73,25 @@ defmodule Efsql.Tui.View do
   defp bottom_bar(%Model{flash: {:info, msg}}, _cols), do: [{:ok, " " <> msg}]
   defp bottom_bar(%Model{busy: busy}, _cols) when busy != nil, do: [{:accent, " ⋯ #{busy} (Esc cancels)"}]
 
-  defp bottom_bar(%Model{mode: mode, qfocus: qfocus}, _cols) do
+  defp bottom_bar(%Model{mode: mode, qfocus: qfocus} = model, _cols) do
     hints =
       case {mode, qfocus} do
         {:navigator, _} -> "↑↓ move · type to filter · Enter open · ? help · ^D quit"
         {:schema, _} -> "↑↓ move · Enter open · q query · t tenants · r resample · ? help"
         {:query, :input} -> "Enter run · Tab complete · ↑↓ history · Esc schema · \\? help · \\plan"
         {:query, :results} -> "↑↓ move · Enter inspect · Tab/Esc back to input"
-        {:inspector, _} -> "↑↓ field · PgUp/PgDn scroll value · Esc back · ? help"
+        {:inspector, _} -> inspector_hint(model)
         {:help, _} -> "↑↓ scroll · Esc back"
       end
 
     [{:dim, " " <> hints}]
   end
+
+  defp inspector_hint(%Model{ifocus: :value}),
+    do: "↑↓ scroll · Space/b page · g/G top/bottom · Tab fields · Esc back"
+
+  defp inspector_hint(%Model{ifocus: :fields}),
+    do: "↑↓ field · Tab scroll value · Space/b page · Esc back · ? help"
 
   # -- content per mode --
 
@@ -322,17 +328,15 @@ defmodule Efsql.Tui.View do
 
     list =
       fields
-      |> list_lines(model.ifield_cursor, min(length(fields), div(height, 2)), fn f ->
-        pad(" #{f}", 20) <> Render.cell(Map.get(row, f), cols - 24)
-      end)
+      |> list_lines(
+        model.ifield_cursor,
+        min(length(fields), div(height, 2)),
+        fn f -> pad(" #{f}", 20) <> Render.cell(Map.get(row, f), cols - 24) end,
+        model.ifocus == :fields
+      )
 
-    lines =
-      Map.get(row, selected)
-      |> Render.full(cols - 4)
-      |> Render.wrap(cols - 4)
-
-    # " Row" + the field list + a blank + the field-name header
-    value_height = max(height - length(list) - 3, 1)
+    # App owns this layout math so its scroll clamping cannot drift from ours.
+    {lines, value_height} = App.inspector_value(model)
     max_scroll = max(length(lines) - value_height, 0)
     scroll = min(model.ivalue_scroll, max_scroll)
 
@@ -341,12 +345,18 @@ defmodule Efsql.Tui.View do
       |> Enum.slice(scroll, value_height)
       |> Enum.map(&[{:none, "  " <> &1}])
 
+    marker = if model.ifocus == :value, do: "▸ ", else: "  "
+
     header =
       if max_scroll > 0 do
         shown_to = min(scroll + value_height, length(lines))
-        [{:head, " #{selected}"}, {:dim, "  lines #{scroll + 1}-#{shown_to} of #{length(lines)} · PgUp/PgDn"}]
+
+        [
+          {:head, " #{marker}#{selected}"},
+          {:dim, "  lines #{scroll + 1}-#{shown_to} of #{length(lines)}"}
+        ]
       else
-        [{:head, " #{selected}"}]
+        [{:head, " #{marker}#{selected}"}]
       end
 
     [[{:head, " Row"}]] ++ list ++ [[], header] ++ value

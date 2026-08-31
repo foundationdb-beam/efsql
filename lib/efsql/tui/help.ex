@@ -83,7 +83,12 @@ defmodule Efsql.Tui.Help do
          "?  help          t  tenants        q  query editor",
          "r  resample      Enter  open/run   Esc  back",
          "Tab  complete, or with empty input jump to results",
-         "↑↓ move or history   ^D quit   Esc cancels a running query"
+         "↑↓ move or history   ^D quit   Esc cancels a running query",
+         "",
+         "Scrolling here and in the inspector:",
+         {:sql, "Space / b   page down / up      g / G   top / bottom"},
+         {:sql, "PgDn / PgUp page down / up      ↑ ↓     line by line"},
+         {:note, "in the inspector, Tab moves focus between fields and value"}
        ]}
     ]
   end

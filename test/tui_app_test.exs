@@ -232,9 +232,11 @@ defmodule Efsql.Tui.AppTest do
       {model, _} = feed(inspector_with_long_value(), [{:key, :page_down}])
       text = frame_text(model)
 
-      assert model.ivalue_scroll == 10
-      assert text =~ "lines 11-"
-      assert text =~ "line11"
+      # a page is the pane height less a line of context, not a fixed 10
+      assert model.ivalue_scroll > 0
+      first = model.ivalue_scroll + 1
+      assert text =~ "lines #{first}-"
+      assert text =~ "line#{first}"
       # the first page is no longer in the value pane
       refute Enum.any?(frame(model), &(String.trim(&1) == "line1"))
     end
@@ -255,9 +257,63 @@ defmodule Efsql.Tui.AppTest do
       assert frame_text(model) =~ "line60"
     end
 
+    test "tab toggles focus and arrows follow it" do
+      model = inspector_with_long_value()
+      assert model.ifocus == :fields
+
+      # with fields focused, down moves the field cursor
+      {m, _} = feed(model, [{:key, :down}])
+      assert m.ifield_cursor == 1
+      assert m.ivalue_scroll == 0
+
+      # with the value focused, down scrolls it a line at a time
+      {m, _} = feed(model, [{:key, :tab}, {:key, :down}, {:key, :down}])
+      assert m.ifocus == :value
+      assert m.ifield_cursor == 0
+      assert m.ivalue_scroll == 2
+
+      {m, _} = feed(m, [{:key, :tab}])
+      assert m.ifocus == :fields
+    end
+
+    test "space and b page the value from either focus" do
+      {m, _} = feed(inspector_with_long_value(), [{:char, " "}])
+      assert m.ivalue_scroll > 0
+      paged = m.ivalue_scroll
+
+      {m, _} = feed(m, [{:char, "b"}])
+      assert m.ivalue_scroll == 0
+
+      # a page keeps one line of context rather than jumping a full screen
+      assert paged < 16
+    end
+
+    test "g and G jump within the focused pane" do
+      {m, _} = feed(inspector_with_long_value(), [{:key, :tab}, {:char, "G"}])
+      assert m.ifocus == :value
+      assert frame_text(m) =~ "line60"
+
+      {m, _} = feed(m, [{:char, "g"}])
+      assert m.ivalue_scroll == 0
+
+      # with fields focused, G goes to the last field
+      {m, _} = feed(inspector_with_long_value(), [{:char, "G"}])
+      assert m.ifield_cursor == 1
+      {m, _} = feed(m, [{:char, "g"}])
+      assert m.ifield_cursor == 0
+    end
+
+    test "scroll is clamped in the model, so paging back responds at once" do
+      {m, _} = feed(inspector_with_long_value(), List.duplicate({:char, " "}, 20))
+      at_end = m.ivalue_scroll
+
+      {m, _} = feed(m, [{:char, "b"}])
+      assert m.ivalue_scroll < at_end
+    end
+
     test "changing field resets the scroll" do
       {model, _} = feed(inspector_with_long_value(), [{:key, :page_down}])
-      assert model.ivalue_scroll == 10
+      assert model.ivalue_scroll > 0
 
       {model, _} = feed(model, [{:key, :down}])
       assert model.ivalue_scroll == 0
@@ -328,7 +384,7 @@ defmodule Efsql.Tui.AppTest do
     assert up.help_scroll == 0
 
     {down, _} = feed(help, [{:key, :page_down}])
-    assert down.help_scroll == 10
+    assert down.help_scroll > 0
     assert length(frame(down)) == 16
 
     # the whole page is reachable by scrolling
