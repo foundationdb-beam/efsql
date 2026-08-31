@@ -208,7 +208,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # --repo is required: this job only downloads artifacts, so there is
+          # no checkout for gh to infer the repository from.
           gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
             --title "efsql $GITHUB_REF_NAME" \
             --generate-notes
 
