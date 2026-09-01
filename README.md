@@ -56,11 +56,12 @@ sudo dpkg -i foundationdb-clients_7.3.69-1_amd64.deb
 ```
 
 ```bash
-VERSION=0.1.0 && curl -LO https://github.com/foundationdb-beam/efsql/releases/download/v${VERSION}/efsql_${VERSION}_amd64.deb
+VERSION=<latest_version_from_releases> # e.g. "0.1.1" \
+  && curl -LO https://github.com/foundationdb-beam/efsql/releases/download/v${VERSION}/efsql_${VERSION}_amd64.deb
 ```
 
 ```bash
-sudo dpkg -i efsql_0.1.0_amd64.deb
+sudo dpkg -i efsql_$VERSION_amd64.deb
 ```
 
 On arm64, substitute `aarch64` in the FoundationDB asset name and `arm64` in
@@ -73,11 +74,12 @@ to a self-contained directory; put `bin/efsql` on your `PATH` (a symlink is
 fine — it resolves its own location):
 
 ```bash
-VERSION=0.1.0 && curl -LO https://github.com/foundationdb-beam/efsql/releases/download/v${VERSION}/efsql-${VERSION}-linux-x86_64.tar.gz
+VERSION=<latest_version_from_releases> # e.g. "0.1.1" \
+  && curl -LO https://github.com/foundationdb-beam/efsql/releases/download/v${VERSION}/efsql-${VERSION}-linux-x86_64.tar.gz
 ```
 
 ```bash
-tar xzf efsql-0.1.0-linux-x86_64.tar.gz
+tar xzf efsql-$VERSION-linux-x86_64.tar.gz
 ```
 
 ### Verify the installation
