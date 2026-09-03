@@ -4,7 +4,7 @@ defmodule Efsql.MixProject do
   def project do
     [
       app: :efsql,
-      version: "0.1.3",
+      version: "0.1.4",
       description: "SQL frontend and data explorer for FoundationDB",
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
