@@ -67,7 +67,7 @@ defmodule Efsql.Tui do
   @impl true
   def handle_info({:input, data}, state) do
     state = cancel_esc_timer(state)
-    {events, rest} = Event.decode(state.buffer <> data)
+    {events, rest} = Event.decode(state.buffer <> drain_input(data))
 
     state =
       case rest do
@@ -169,6 +169,18 @@ defmodule Efsql.Tui do
     end
 
     %{state | tasks: %{}}
+  end
+
+  # Coalesces input that queued while the last frame was painted (a held key,
+  # a paste) so one decode and one paint cover all of it. Otherwise each
+  # message would get its own frame and the screen would fall further behind
+  # the keyboard the longer the key is held, then keep scrolling after release.
+  defp drain_input(acc) do
+    receive do
+      {:input, more} -> drain_input(acc <> more)
+    after
+      0 -> acc
+    end
   end
 
   defp cancel_esc_timer(%{esc_timer: nil} = state), do: state

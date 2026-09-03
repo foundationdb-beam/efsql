@@ -15,6 +15,11 @@ defmodule Efsql.Tui.App do
   alias Efsql.Render
   alias Efsql.Tui.Help
 
+  # Widest a results column can grow. Sized so a canonical UUID (36 chars)
+  # fits without an ellipsis, since primary keys are the column you most
+  # often need to read in full and then copy into another query.
+  @max_col_width 36
+
   defmodule Model do
     defstruct size: {24, 80},
               mode: :navigator,
@@ -27,6 +32,9 @@ defmodule Efsql.Tui.App do
               nav_entries: nil,
               nav_cursor: 0,
               nav_filter: "",
+              # entries matching the filter, recomputed only when either
+              # changes (see `refilter/1`), so a held arrow key stays O(1)
+              nav_visible: [],
               # session
               storage_id: nil,
               tenant_id: nil,
@@ -46,6 +54,10 @@ defmodule Efsql.Tui.App do
               saved_input: "",
               rows: nil,
               columns: [],
+              # rows rendered once per query result (see `done/3`): a list of
+              # cell strings per row, and each column's natural width
+              cells: [],
+              col_widths: [],
               plan: nil,
               qerror: nil,
               elapsed_ms: nil,
@@ -59,6 +71,8 @@ defmodule Efsql.Tui.App do
               ifield_cursor: 0,
               ivalue_scroll: 0,
               ifocus: :fields,
+              # {{field_cursor, cols}, wrapped lines} — see `inspector_value/1`
+              ivalue: nil,
               # help
               help_scroll: 0,
               help_return: :schema
@@ -75,7 +89,7 @@ defmodule Efsql.Tui.App do
 
   # -- global --
 
-  def update(model, {:resize, size}), do: {%{model | size: size}, []}
+  def update(model, {:resize, size}), do: {%{model | size: size}, []} |> refresh_ivalue()
 
   # Esc is the reliable cancel: Ctrl-C only reaches us as a byte when the
   # emulator's break handling is off, so both are accepted.
@@ -101,8 +115,8 @@ defmodule Efsql.Tui.App do
   def update(%Model{mode: :help} = model, msg), do: help(clear_flash(model), msg)
   def update(%Model{mode: :navigator} = model, msg), do: navigator(clear_flash(model), msg)
   def update(%Model{mode: :schema} = model, msg), do: schema(clear_flash(model), msg)
-  def update(%Model{mode: :query} = model, msg), do: query(clear_flash(model), msg)
-  def update(%Model{mode: :inspector} = model, msg), do: inspector(clear_flash(model), msg)
+  def update(%Model{mode: :query} = model, msg), do: query(clear_flash(model), msg) |> refresh_ivalue()
+  def update(%Model{mode: :inspector} = model, msg), do: inspector(clear_flash(model), msg) |> refresh_ivalue()
 
   defp clear_flash(model), do: %{model | flash: nil}
 
@@ -142,15 +156,15 @@ defmodule Efsql.Tui.App do
   defp navigator(model, {:key, :down}), do: {move_nav(model, 1), []}
 
   defp navigator(model, {:char, c}) do
-    {%{model | nav_filter: model.nav_filter <> c, nav_cursor: 0}, []}
+    {refilter(%{model | nav_filter: model.nav_filter <> c, nav_cursor: 0}), []}
   end
 
   defp navigator(%Model{nav_filter: f} = model, {:key, :backspace}) when f != "" do
-    {%{model | nav_filter: String.slice(f, 0..-2//1), nav_cursor: 0}, []}
+    {refilter(%{model | nav_filter: String.slice(f, 0..-2//1), nav_cursor: 0}), []}
   end
 
   defp navigator(%Model{nav_path: [_ | _]} = model, {:key, key}) when key in [:backspace, :esc] do
-    model = %{model | nav_path: [], nav_filter: "", nav_cursor: 0, nav_entries: nil}
+    model = refilter(%{model | nav_path: [], nav_filter: "", nav_cursor: 0, nav_entries: nil})
     {model, [load_nav(model)]}
   end
 
@@ -166,13 +180,14 @@ defmodule Efsql.Tui.App do
       name ->
         case model.nav_path do
           [] ->
-            model = %{
-              model
-              | nav_path: [name],
-                nav_filter: "",
-                nav_cursor: 0,
-                nav_entries: nil
-            }
+            model =
+              refilter(%{
+                model
+                | nav_path: [name],
+                  nav_filter: "",
+                  nav_cursor: 0,
+                  nav_entries: nil
+              })
 
             {model, [load_nav(model)]}
 
@@ -189,10 +204,13 @@ defmodule Efsql.Tui.App do
     %{model | nav_cursor: clamp(model.nav_cursor + delta, count)}
   end
 
-  def nav_visible(%Model{nav_entries: nil}), do: []
+  def nav_visible(%Model{nav_visible: visible}), do: visible
 
-  def nav_visible(%Model{nav_entries: entries, nav_filter: filter}) do
-    Enum.filter(entries, &String.contains?(String.downcase(&1), String.downcase(filter)))
+  defp refilter(%Model{nav_entries: nil} = model), do: %{model | nav_visible: []}
+
+  defp refilter(%Model{nav_entries: entries, nav_filter: filter} = model) do
+    needle = String.downcase(filter)
+    %{model | nav_visible: Enum.filter(entries, &String.contains?(String.downcase(&1), needle))}
   end
 
   defp load_nav(%Model{nav_path: []}) do
@@ -517,7 +535,8 @@ defmodule Efsql.Tui.App do
     case Enum.at(rows || [], model.row_cursor) do
       nil -> {model, []}
       row ->
-        {%{model | mode: :inspector, irow: row, ifield_cursor: 0, ivalue_scroll: 0, ifocus: :fields}, []}
+        model = %{model | mode: :inspector, irow: row, ifield_cursor: 0, ivalue_scroll: 0, ifocus: :fields, ivalue: nil}
+        {model, []}
     end
   end
 
@@ -600,24 +619,50 @@ defmodule Efsql.Tui.App do
   @doc """
   The wrapped lines of the selected value and how many of them fit on screen.
   Lives here so the scroll clamping and the view agree on one layout.
+
+  Rendering and wrapping a large value is the expensive part, so `update/2`
+  caches the lines in `ivalue` (keyed by field and width) and every key
+  press in the inspector reuses them.
   """
   def inspector_value(%Model{irow: nil}), do: {[], 1}
 
-  def inspector_value(%Model{irow: row, size: {rows, cols}} = model) do
-    fields = row |> Map.keys() |> Enum.sort()
-    selected = Enum.at(fields, model.ifield_cursor)
+  def inspector_value(%Model{irow: row, size: {rows, _cols}} = model) do
+    key = ivalue_key(model)
 
     lines =
-      row
-      |> Map.get(selected)
-      |> Render.full(cols - 4)
-      |> Render.wrap(cols - 4)
+      case model.ivalue do
+        {^key, lines} -> lines
+        _ -> ivalue_lines(model)
+      end
 
     height = max(rows - 2, 1)
-    list_height = min(length(fields), div(height, 2))
+    list_height = min(map_size(row), div(height, 2))
     # " Row" + the field list + a blank + the field-name header
     {lines, max(height - list_height - 3, 1)}
   end
+
+  defp ivalue_key(%Model{ifield_cursor: ix, size: {_rows, cols}}), do: {ix, cols}
+
+  defp ivalue_lines(%Model{irow: row, size: {_rows, cols}} = model) do
+    fields = row |> Map.keys() |> Enum.sort()
+    selected = Enum.at(fields, model.ifield_cursor)
+
+    row
+    |> Map.get(selected)
+    |> Render.full(cols - 4)
+    |> Render.wrap(cols - 4)
+  end
+
+  defp refresh_ivalue({%Model{mode: :inspector, irow: row} = model, cmds}) when row != nil do
+    key = ivalue_key(model)
+
+    case model.ivalue do
+      {^key, _} -> {model, cmds}
+      _ -> {%{model | ivalue: {key, ivalue_lines(model)}}, cmds}
+    end
+  end
+
+  defp refresh_ivalue(result), do: result
 
   # -- task results --
 
@@ -626,7 +671,7 @@ defmodule Efsql.Tui.App do
   end
 
   defp done(model, :nav_entries, {:ok, entries}) do
-    {%{model | busy: nil, nav_entries: Enum.sort(entries)}, []}
+    {refilter(%{model | busy: nil, nav_entries: Enum.sort(entries)}), []}
   end
 
   defp done(model, :activate, {:ok, {storage_id, tenant_id, tenant}}) do
@@ -658,11 +703,16 @@ defmodule Efsql.Tui.App do
   end
 
   defp done(model, :query, {:ok, {plan, rows, tenants, elapsed}}) do
+    columns = columns(rows)
+    cells = render_cells(rows, columns)
+
     model = %{
       model
       | busy: nil,
         rows: rows,
-        columns: columns(rows),
+        columns: columns,
+        cells: cells,
+        col_widths: col_widths(columns, cells),
         plan: plan,
         qerror: nil,
         elapsed_ms: elapsed,
@@ -681,6 +731,25 @@ defmodule Efsql.Tui.App do
   defp columns(rows) do
     keys = rows |> Enum.flat_map(&Map.keys/1) |> Enum.uniq() |> Enum.sort()
     if :id in keys, do: [:id | List.delete(keys, :id)], else: keys
+  end
+
+  # Cells are rendered once here rather than per frame: a frame is painted on
+  # every key press, and inspecting every visible value each time is what
+  # made the editor lag on wide or large rows.
+  defp render_cells(rows, columns) do
+    Enum.map(rows, fn row ->
+      Enum.map(columns, &Render.cell(Map.get(row, &1), @max_col_width))
+    end)
+  end
+
+  defp col_widths(columns, cells) do
+    header = Enum.map(columns, &(&1 |> to_string() |> String.length()))
+
+    cells
+    |> Enum.reduce(header, fn row, widths ->
+      Enum.zip_with(row, widths, &max(String.length(&1), &2))
+    end)
+    |> Enum.map(&min(&1, @max_col_width))
   end
 
   defp error_text(%{__exception__: true} = e), do: Exception.message(e)

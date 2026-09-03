@@ -6,12 +6,63 @@ defmodule Efsql.Render do
   """
 
   def cell(value, width \\ 40) do
+    # A cell only ever shows `width` graphemes, so a big string is cut to a
+    # bounded prefix before anything walks it: the view renders hundreds of
+    # cells per keystroke, and checking printability of a 50KB value for each
+    # of them is what made typing lag.
     value
+    |> cell_prefix(width)
     |> render(width, false)
     # A cell is one line by contract: a value containing newlines or tabs would
     # otherwise break the frame layout when written to the terminal.
     |> String.replace(~r/[\r\n\t]+/, " ")
     |> truncate(width)
+  end
+
+  # Generous bytes-per-grapheme budget: combining marks and emoji sequences
+  # take several bytes each, and a too-short prefix only costs an ellipsis.
+  @bytes_per_cell_grapheme 8
+
+  defp cell_prefix(value, width) when is_binary(value) do
+    max_bytes = width * @bytes_per_cell_grapheme
+
+    if byte_size(value) > max_bytes do
+      {:prefix, utf8_prefix(value, max_bytes), byte_size(value)}
+    else
+      value
+    end
+  end
+
+  defp cell_prefix(value, _width), do: value
+
+  # The longest prefix of at most `n` bytes that does not end mid-codepoint.
+  defp utf8_prefix(bin, n) do
+    prefix = binary_part(bin, 0, n)
+    trim_partial_codepoint(prefix)
+  end
+
+  defp trim_partial_codepoint(<<>>), do: <<>>
+
+  defp trim_partial_codepoint(prefix) do
+    size = byte_size(prefix)
+    last = :binary.last(prefix)
+
+    cond do
+      # ASCII byte: never part of a multibyte sequence
+      last < 0x80 ->
+        prefix
+
+      # a lead byte with no continuation after it: drop it
+      last >= 0xC0 ->
+        binary_part(prefix, 0, size - 1)
+
+      # continuation byte: complete only if the sequence it belongs to fits
+      true ->
+        case String.valid?(binary_part(prefix, max(size - 4, 0), min(size, 4))) do
+          true -> prefix
+          false -> trim_partial_codepoint(binary_part(prefix, 0, size - 1))
+        end
+    end
   end
 
   def full(value, width \\ 80) do
@@ -20,12 +71,14 @@ defmodule Efsql.Render do
 
   defp render(nil, _width, _multi), do: "nil"
 
-  defp render(v, _width, _multi) when is_binary(v) do
-    if String.valid?(v) and String.printable?(v) do
-      v
-    else
-      hex = v |> binary_part(0, min(byte_size(v), 8)) |> Base.encode16(case: :lower)
-      "<<0x#{hex}#{if byte_size(v) > 8, do: "…"}>> (#{byte_size(v)} bytes)"
+  defp render(v, _width, _multi) when is_binary(v), do: render_binary(v, byte_size(v))
+
+  # A bounded prefix of a large binary: printable text always ends in an
+  # ellipsis, and the hex summary reports the full binary's size.
+  defp render({:prefix, prefix, size}, _width, _multi) do
+    case render_binary(prefix, size) do
+      ^prefix -> prefix <> "…"
+      summary -> summary
     end
   end
 
@@ -41,6 +94,15 @@ defmodule Efsql.Render do
       printable_limit: if(multi, do: :infinity, else: 64),
       syntax_colors: []
     )
+  end
+
+  defp render_binary(v, size) do
+    if String.valid?(v) and String.printable?(v) do
+      v
+    else
+      hex = v |> binary_part(0, min(byte_size(v), 8)) |> Base.encode16(case: :lower)
+      "<<0x#{hex}#{if size > 8, do: "…"}>> (#{size} bytes)"
+    end
   end
 
   @doc """

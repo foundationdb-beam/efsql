@@ -26,11 +26,6 @@ defmodule Efsql.Tui.View do
   }
   @reset "\e[0m"
 
-  # Widest a results column can grow. Sized so a canonical UUID (36 chars)
-  # fits without an ellipsis, since primary keys are the column you most
-  # often need to read in full and then copy into another query.
-  @max_col_width 36
-
   def view(%Model{size: {rows, cols}} = model) do
     content_height = max(rows - 2, 1)
     {content, cursor} = content(model, content_height, cols)
@@ -257,7 +252,8 @@ defmodule Efsql.Tui.View do
   end
 
   defp results_lines(model, height, cols) do
-    widths = column_widths(model.columns, model.rows, cols)
+    # shrink from the right if the row would overflow the screen
+    widths = shrink(model.col_widths, cols - 2)
     visible = max(height - 2, 1)
     count = length(model.rows)
     start = if model.row_cursor >= visible, do: model.row_cursor - visible + 1, else: 0
@@ -265,11 +261,10 @@ defmodule Efsql.Tui.View do
     header = [{:head, row_text(Enum.map(model.columns, &to_string/1), widths)}]
 
     rows =
-      model.rows
+      model.cells
       |> Enum.slice(start, visible)
       |> Enum.with_index(start)
-      |> Enum.map(fn {row, ix} ->
-        cells = Enum.map(model.columns, &Render.cell(Map.get(row, &1), @max_col_width))
+      |> Enum.map(fn {cells, ix} ->
         style = if model.qfocus == :results and ix == model.row_cursor, do: :sel, else: :none
         [{style, row_text(cells, widths)}]
       end)
@@ -282,25 +277,6 @@ defmodule Efsql.Tui.View do
       ]
 
     [header] ++ rows ++ [footer]
-  end
-
-  defp column_widths(columns, rows, cols) do
-    sample = Enum.take(rows, 50)
-
-    widths =
-      Enum.map(columns, fn col ->
-        header_w = col |> to_string() |> String.length()
-
-        cell_w =
-          sample
-          |> Enum.map(&(Map.get(&1, col) |> Render.cell(@max_col_width) |> String.length()))
-          |> Enum.max(fn -> 0 end)
-
-        max(header_w, cell_w) |> min(@max_col_width)
-      end)
-
-    # shrink from the right if the row would overflow the screen
-    shrink(widths, cols - 2)
   end
 
   defp shrink(widths, budget) do
