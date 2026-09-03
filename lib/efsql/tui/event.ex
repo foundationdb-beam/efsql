@@ -20,6 +20,16 @@ defmodule Efsql.Tui.Event do
 
   defp decode(<<0x1B>>, acc), do: {Enum.reverse(acc), <<0x1B>>}
   defp decode(<<0x1B, ?[>>, acc), do: {Enum.reverse(acc), <<0x1B, ?[>>}
+  defp decode(<<0x1B, ?O>>, acc), do: {Enum.reverse(acc), <<0x1B, ?O>>}
+
+  # SS3 form (`\eOA`): what terminals send for cursor keys in application
+  # cursor-key mode, which a previous program or the shell may leave on.
+  defp decode(<<0x1B, ?O, final, rest::binary>>, acc) do
+    case ss3(final) do
+      nil -> decode(<<?O, final, rest::binary>>, [{:key, :esc} | acc])
+      key -> decode(rest, [{:key, key} | acc])
+    end
+  end
 
   defp decode(<<0x1B, ?[, rest::binary>> = buffer, acc) do
     case csi(rest) do
@@ -29,7 +39,7 @@ defmodule Efsql.Tui.Event do
     end
   end
 
-  # Esc followed by anything other than '[' is a lone Esc press
+  # Esc followed by anything other than '[' or 'O' is a lone Esc press
   defp decode(<<0x1B, rest::binary>>, acc), do: decode(rest, [{:key, :esc} | acc])
 
   defp decode(<<b, rest::binary>>, acc) when b in [?\r, ?\n], do: decode(rest, [{:key, :enter} | acc])
@@ -70,6 +80,14 @@ defmodule Efsql.Tui.Event do
   @doc "Resolves a pending ambiguous buffer after the Esc timeout."
   def flush(<<0x1B, _::binary>>), do: [{:key, :esc}]
   def flush(_), do: []
+
+  defp ss3(?A), do: :up
+  defp ss3(?B), do: :down
+  defp ss3(?C), do: :right
+  defp ss3(?D), do: :left
+  defp ss3(?H), do: :home
+  defp ss3(?F), do: :end
+  defp ss3(_), do: nil
 
   defp csi(<<?A, rest::binary>>), do: {{:key, :up}, rest}
   defp csi(<<?B, rest::binary>>), do: {{:key, :down}, rest}

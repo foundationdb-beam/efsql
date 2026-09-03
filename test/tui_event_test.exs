@@ -28,6 +28,21 @@ defmodule Efsql.Tui.EventTest do
              Event.decode("\e[A\e[B\e[C\e[D")
   end
 
+  test "application-mode (SS3) cursor keys" do
+    assert {[{:key, :up}, {:key, :down}, {:key, :right}, {:key, :left}], ""} =
+             Event.decode("\eOA\eOB\eOC\eOD")
+
+    assert {[{:key, :home}, {:key, :end}], ""} = Event.decode("\eOH\eOF")
+  end
+
+  test "partial ss3 is buffered" do
+    assert {[], "\eO"} = Event.decode("\eO")
+  end
+
+  test "unknown ss3 final is esc plus chars" do
+    assert {[{:key, :esc}, {:char, "O"}, {:char, "z"}], ""} = Event.decode("\eOz")
+  end
+
   test "tilde sequences" do
     assert {[{:key, :page_up}, {:key, :page_down}, {:key, :delete}], ""} =
              Event.decode("\e[5~\e[6~\e[3~")

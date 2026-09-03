@@ -28,8 +28,11 @@ defmodule Efsql.Tui.Term do
     end
   end
 
+  # `\e[?1l` puts cursor keys back in normal mode (`\e[A`, not `\eOA`) in
+  # case a previous program left application mode on; `Efsql.Tui.Event`
+  # decodes both forms, this just keeps the common path common.
   def alt_screen_on() do
-    write("\e[?1049h\e[?25l\e[2J\e[H")
+    write("\e[?1049h\e[?1l\e[?25l\e[2J\e[H")
   end
 
   def alt_screen_off() do
