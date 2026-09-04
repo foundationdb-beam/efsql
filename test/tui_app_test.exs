@@ -71,7 +71,9 @@ defmodule Efsql.Tui.AppTest do
     model = init()
     assert frame_text(model) =~ "loading…"
 
-    {model, _} = feed(model, [{:done, :nav_entries, {:ok, ["Ecto.Adapters.FoundationDB", "playground"]}}])
+    {model, _} =
+      feed(model, [{:done, :nav_entries, {:ok, ["Ecto.Adapters.FoundationDB", "playground"]}}])
+
     text = frame_text(model)
     assert text =~ "Storage ids"
     assert text =~ "Ecto.Adapters.FoundationDB"
@@ -213,7 +215,9 @@ defmodule Efsql.Tui.AppTest do
       long = Enum.map_join(1..60, "\n", &"line#{&1}")
       plan = %Efsql.Physical.Plan{access: {:pk_range, nil, nil, nil, []}, ops: []}
 
-      {model, _} = feed(model, [{:done, :query, {:ok, {plan, [%{id: "0001", blob: long}], %{}, 1}}}])
+      {model, _} =
+        feed(model, [{:done, :query, {:ok, {plan, [%{id: "0001", blob: long}], %{}, 1}}}])
+
       {model, _} = feed(model, [{:key, :tab}, {:key, :enter}])
       model
     end
@@ -334,7 +338,9 @@ defmodule Efsql.Tui.AppTest do
     model = %{activated() | mode: :query}
 
     {model, _} =
-      feed(model, [{:done, :query, {:error, %Efsql.Exception.Unsupported{message: "'or' is not supported"}}}])
+      feed(model, [
+        {:done, :query, {:error, %Efsql.Exception.Unsupported{message: "'or' is not supported"}}}
+      ])
 
     assert frame_text(model) =~ "'or' is not supported"
   end

@@ -5,9 +5,7 @@ defmodule EfsqlTest.Integration.In do
     tenant_id = context[:tenant_id]
 
     assert [%{id: "0001", name: "Alice"}, %{id: "0003", name: "Charles"}] =
-             Efsql.all(
-               "select id, name from #{tenant_id}.users where _ in ('0001', '0003');"
-             )
+             Efsql.all("select id, name from #{tenant_id}.users where _ in ('0001', '0003');")
              |> Enum.sort_by(& &1.id)
   end
 
@@ -15,9 +13,7 @@ defmodule EfsqlTest.Integration.In do
     tenant_id = context[:tenant_id]
 
     assert [%{name: "Alice"}, %{name: "Bob"}] =
-             Efsql.all(
-               "select id, name from #{tenant_id}.users where name in ('Alice', 'Bob');"
-             )
+             Efsql.all("select id, name from #{tenant_id}.users where name in ('Alice', 'Bob');")
              |> Enum.sort_by(& &1.name)
   end
 
@@ -52,9 +48,7 @@ defmodule EfsqlTest.Integration.In do
     tenant_id = context[:tenant_id]
 
     assert [%{id: "0002"}] =
-             Efsql.all(
-               "select id from #{tenant_id}.users where notes in ('foobar', 'nope');"
-             )
+             Efsql.all("select id from #{tenant_id}.users where notes in ('foobar', 'nope');")
   end
 
   test "in with a single value", context do

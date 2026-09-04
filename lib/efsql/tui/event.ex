@@ -42,7 +42,9 @@ defmodule Efsql.Tui.Event do
   # Esc followed by anything other than '[' or 'O' is a lone Esc press
   defp decode(<<0x1B, rest::binary>>, acc), do: decode(rest, [{:key, :esc} | acc])
 
-  defp decode(<<b, rest::binary>>, acc) when b in [?\r, ?\n], do: decode(rest, [{:key, :enter} | acc])
+  defp decode(<<b, rest::binary>>, acc) when b in [?\r, ?\n],
+    do: decode(rest, [{:key, :enter} | acc])
+
   defp decode(<<?\t, rest::binary>>, acc), do: decode(rest, [{:key, :tab} | acc])
   defp decode(<<0x7F, rest::binary>>, acc), do: decode(rest, [{:key, :backspace} | acc])
   defp decode(<<0x08, rest::binary>>, acc), do: decode(rest, [{:key, :backspace} | acc])
@@ -106,7 +108,9 @@ defmodule Efsql.Tui.Event do
   defp csi(_), do: :unknown
 
   # Skip an unrecognized CSI sequence: parameter bytes then one final byte.
-  defp skip_csi(<<b, rest::binary>>) when b in ?0..?9 or b in [?;, ?<, ?=, ??, ?>], do: skip_csi(rest)
+  defp skip_csi(<<b, rest::binary>>) when b in ?0..?9 or b in [?;, ?<, ?=, ??, ?>],
+    do: skip_csi(rest)
+
   defp skip_csi(<<_final, rest::binary>>), do: rest
   defp skip_csi(<<>>), do: <<>>
 end

@@ -85,7 +85,9 @@ defmodule Efsql.Parser do
     :erlang.list_to_binary(table)
   end
 
-  defp from_token_to_prefix({:dot, _meta, [{_st, _sm, storage}, {:dot, _, [{_tt, _tm, tenant}, _table]}]}) do
+  defp from_token_to_prefix(
+         {:dot, _meta, [{_st, _sm, storage}, {:dot, _, [{_tt, _tm, tenant}, _table]}]}
+       ) do
     {:erlang.list_to_binary(storage), :erlang.list_to_binary(tenant)}
   end
 
@@ -161,7 +163,8 @@ defmodule Efsql.Parser do
 
   defp param({:paren, _meta, [{:quote, _, part}, {:comma, _, [{tag, _, n}]}]})
        when tag in ~w[integer numeric]a do
-    {:erlang.list_to_binary(part), EctoFoundationDB.Versionstamp.from_integer(:erlang.list_to_integer(n))}
+    {:erlang.list_to_binary(part),
+     EctoFoundationDB.Versionstamp.from_integer(:erlang.list_to_integer(n))}
   end
 
   defp sql_op(:=), do: :==

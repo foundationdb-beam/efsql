@@ -72,7 +72,11 @@ defmodule Efsql.Tui do
     state =
       case rest do
         <<0x1B, _::binary>> ->
-          %{state | buffer: rest, esc_timer: Process.send_after(self(), :esc_timeout, @esc_timeout_ms)}
+          %{
+            state
+            | buffer: rest,
+              esc_timer: Process.send_after(self(), :esc_timeout, @esc_timeout_ms)
+          }
 
         _ ->
           %{state | buffer: rest}

@@ -63,10 +63,17 @@ defmodule Efsql.Discover do
       )
 
     case DynamicSupervisor.start_child(Efsql.StorageCaches, spec) do
-      {:ok, _pid} -> :ok
-      :ignore -> :ok
-      {:error, {:already_started, _pid}} -> :ok
-      {:error, reason} -> raise "could not start tenant cache for #{storage_id}: #{inspect(reason)}"
+      {:ok, _pid} ->
+        :ok
+
+      :ignore ->
+        :ok
+
+      {:error, {:already_started, _pid}} ->
+        :ok
+
+      {:error, reason} ->
+        raise "could not start tenant cache for #{storage_id}: #{inspect(reason)}"
     end
   end
 

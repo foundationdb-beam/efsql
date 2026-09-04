@@ -28,15 +28,21 @@ defmodule Efsql.Rewrite do
 
   defp merge_ranges([{:cmp, op, field, value} | rest], acc) when op in @lower_ops do
     case take_bound(rest, field, @upper_ops) do
-      nil -> merge_ranges(rest, [{:cmp, op, field, value} | acc])
-      {{:cmp, op2, _f, value2}, rest2} -> merge_ranges(rest2, [{:range, field, {op, value}, {op2, value2}} | acc])
+      nil ->
+        merge_ranges(rest, [{:cmp, op, field, value} | acc])
+
+      {{:cmp, op2, _f, value2}, rest2} ->
+        merge_ranges(rest2, [{:range, field, {op, value}, {op2, value2}} | acc])
     end
   end
 
   defp merge_ranges([{:cmp, op, field, value} | rest], acc) when op in @upper_ops do
     case take_bound(rest, field, @lower_ops) do
-      nil -> merge_ranges(rest, [{:cmp, op, field, value} | acc])
-      {{:cmp, op2, _f, value2}, rest2} -> merge_ranges(rest2, [{:range, field, {op2, value2}, {op, value}} | acc])
+      nil ->
+        merge_ranges(rest, [{:cmp, op, field, value} | acc])
+
+      {{:cmp, op2, _f, value2}, rest2} ->
+        merge_ranges(rest2, [{:range, field, {op2, value2}, {op, value}} | acc])
     end
   end
 

@@ -62,22 +62,40 @@ defmodule Efsql.Tui.View do
         tenant_id -> "#{model.storage_id} / #{tenant_id}"
       end
 
-    [{:inv, " efsql · #{model.mode} "}, {:none, "  "}, {:accent, session}, {:dim, "  #{model.cluster_file}"}]
+    [
+      {:inv, " efsql · #{model.mode} "},
+      {:none, "  "},
+      {:accent, session},
+      {:dim, "  #{model.cluster_file}"}
+    ]
   end
 
   defp bottom_bar(%Model{flash: {:error, msg}}, _cols), do: [{:err, " " <> msg}]
   defp bottom_bar(%Model{flash: {:info, msg}}, _cols), do: [{:ok, " " <> msg}]
-  defp bottom_bar(%Model{busy: busy}, _cols) when busy != nil, do: [{:accent, " ⋯ #{busy} (Esc cancels)"}]
+
+  defp bottom_bar(%Model{busy: busy}, _cols) when busy != nil,
+    do: [{:accent, " ⋯ #{busy} (Esc cancels)"}]
 
   defp bottom_bar(%Model{mode: mode, qfocus: qfocus} = model, _cols) do
     hints =
       case {mode, qfocus} do
-        {:navigator, _} -> "↑↓ move · type to filter · Enter open · ? help · ^D quit"
-        {:schema, _} -> "↑↓ move · Enter open · q query · t tenants · r resample · ? help"
-        {:query, :input} -> "Enter run · Tab complete · ↑↓ history · Esc schema · \\? help · \\plan"
-        {:query, :results} -> "↑↓ move · Enter inspect · Tab/Esc back to input"
-        {:inspector, _} -> inspector_hint(model)
-        {:help, _} -> "↑↓ scroll · Esc back"
+        {:navigator, _} ->
+          "↑↓ move · type to filter · Enter open · ? help · ^D quit"
+
+        {:schema, _} ->
+          "↑↓ move · Enter open · q query · t tenants · r resample · ? help"
+
+        {:query, :input} ->
+          "Enter run · Tab complete · ↑↓ history · Esc schema · \\? help · \\plan"
+
+        {:query, :results} ->
+          "↑↓ move · Enter inspect · Tab/Esc back to input"
+
+        {:inspector, _} ->
+          inspector_hint(model)
+
+        {:help, _} ->
+          "↑↓ scroll · Esc back"
       end
 
     [{:dim, " " <> hints}]
@@ -91,10 +109,17 @@ defmodule Efsql.Tui.View do
 
   # -- content per mode --
 
-  defp content(%Model{mode: :navigator} = model, height, cols), do: {navigator(model, height, cols), nil}
-  defp content(%Model{mode: :schema} = model, height, cols), do: {schema(model, height, cols), nil}
+  defp content(%Model{mode: :navigator} = model, height, cols),
+    do: {navigator(model, height, cols), nil}
+
+  defp content(%Model{mode: :schema} = model, height, cols),
+    do: {schema(model, height, cols), nil}
+
   defp content(%Model{mode: :query} = model, height, cols), do: query(model, height, cols)
-  defp content(%Model{mode: :inspector} = model, height, cols), do: {inspector(model, height, cols), nil}
+
+  defp content(%Model{mode: :inspector} = model, height, cols),
+    do: {inspector(model, height, cols), nil}
+
   defp content(%Model{mode: :help} = model, height, _cols), do: {help(model, height), nil}
 
   # -- help --
@@ -152,8 +177,11 @@ defmodule Efsql.Tui.View do
     left =
       [[{:head, " Sources"}]] ++
         case model.sources do
-          [] -> [[{:dim, " (none)"}]]
-          sources -> list_lines(sources, model.src_cursor, height - 1, & &1, model.focus == :sources)
+          [] ->
+            [[{:dim, " (none)"}]]
+
+          sources ->
+            list_lines(sources, model.src_cursor, height - 1, & &1, model.focus == :sources)
         end
 
     right = schema_fields(model, source, height, cols - left_w - 1)
@@ -183,7 +211,12 @@ defmodule Efsql.Tui.View do
 
         rows =
           schema.fields
-          |> list_lines(model.field_cursor, height - 5, &field_line(&1, width), model.focus == :fields)
+          |> list_lines(
+            model.field_cursor,
+            height - 5,
+            &field_line(&1, width),
+            model.focus == :fields
+          )
 
         [[{:head, " #{source}"}], [{:dim, info}], [{:dim, indexes}], header] ++ rows
     end
@@ -232,8 +265,18 @@ defmodule Efsql.Tui.View do
 
     plan_lines =
       if model.show_plan? and model.plan do
-        [[{:dim, Render.truncate(" plan: " <> inspect(model.plan.access, width: :infinity), cols)}]] ++
-          [[{:dim, Render.truncate(" ops:  " <> inspect(model.plan.ops, width: :infinity), cols)}]]
+        [
+          [
+            {:dim,
+             Render.truncate(" plan: " <> inspect(model.plan.access, width: :infinity), cols)}
+          ]
+        ] ++
+          [
+            [
+              {:dim,
+               Render.truncate(" ops:  " <> inspect(model.plan.ops, width: :infinity), cols)}
+            ]
+          ]
       else
         []
       end

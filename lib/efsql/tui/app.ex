@@ -95,7 +95,8 @@ defmodule Efsql.Tui.App do
 
   # Esc is the reliable cancel: Ctrl-C only reaches us as a byte when the
   # emulator's break handling is off, so both are accepted.
-  def update(%Model{busy: busy} = model, {:key, key}) when busy != nil and key in [:esc, :ctrl_c] do
+  def update(%Model{busy: busy} = model, {:key, key})
+      when busy != nil and key in [:esc, :ctrl_c] do
     {%{model | busy: nil, flash: {:info, "cancelled"}}, [:cancel_tasks]}
   end
 
@@ -117,14 +118,20 @@ defmodule Efsql.Tui.App do
   def update(%Model{mode: :help} = model, msg), do: help(clear_flash(model), msg)
   def update(%Model{mode: :navigator} = model, msg), do: navigator(clear_flash(model), msg)
   def update(%Model{mode: :schema} = model, msg), do: schema(clear_flash(model), msg)
-  def update(%Model{mode: :query} = model, msg), do: query(clear_flash(model), msg) |> refresh_ivalue()
-  def update(%Model{mode: :inspector} = model, msg), do: inspector(clear_flash(model), msg) |> refresh_ivalue()
+
+  def update(%Model{mode: :query} = model, msg),
+    do: query(clear_flash(model), msg) |> refresh_ivalue()
+
+  def update(%Model{mode: :inspector} = model, msg),
+    do: inspector(clear_flash(model), msg) |> refresh_ivalue()
 
   defp clear_flash(model), do: %{model | flash: nil}
 
   # -- help --
 
-  defp help(model, {:key, key}) when key in [:esc, :enter], do: {%{model | mode: model.help_return}, []}
+  defp help(model, {:key, key}) when key in [:esc, :enter],
+    do: {%{model | mode: model.help_return}, []}
+
   defp help(model, {:char, c}) when c in ["q", "?"], do: {%{model | mode: model.help_return}, []}
   defp help(model, {:char, "g"}), do: {%{model | help_scroll: 0}, []}
   defp help(model, {:char, "G"}), do: {%{model | help_scroll: max_help_scroll(model)}, []}
@@ -239,6 +246,7 @@ defmodule Efsql.Tui.App do
           storage_id: storage_id,
           migrate: false
         )
+
       {storage_id, tenant_id, tenant}
     end
 
@@ -285,7 +293,9 @@ defmodule Efsql.Tui.App do
 
   defp schema(model, {:char, "q"}), do: {%{model | mode: :query}, []}
   defp schema(model, {:char, "t"}), do: {%{model | mode: :navigator}, []}
-  defp schema(%Model{tenant: t} = model, {:key, :esc}) when t != nil, do: {%{model | mode: :navigator}, []}
+
+  defp schema(%Model{tenant: t} = model, {:key, :esc}) when t != nil,
+    do: {%{model | mode: :navigator}, []}
 
   defp schema(model, {:char, "r"}) do
     case current_source(model) do
@@ -380,14 +390,18 @@ defmodule Efsql.Tui.App do
     {%{model | input: pre <> String.slice(post, 1..-1//1), completion: nil}, []}
   end
 
-  defp query(model, {:key, :left}), do: {%{model | qcursor: max(model.qcursor - 1, 0), completion: nil}, []}
+  defp query(model, {:key, :left}),
+    do: {%{model | qcursor: max(model.qcursor - 1, 0), completion: nil}, []}
 
   defp query(model, {:key, :right}) do
     {%{model | qcursor: min(model.qcursor + 1, String.length(model.input)), completion: nil}, []}
   end
 
   defp query(model, {:key, k}) when k in [:home, :ctrl_a], do: {%{model | qcursor: 0}, []}
-  defp query(model, {:key, k}) when k in [:end, :ctrl_e], do: {%{model | qcursor: String.length(model.input)}, []}
+
+  defp query(model, {:key, k}) when k in [:end, :ctrl_e],
+    do: {%{model | qcursor: String.length(model.input)}, []}
+
   defp query(model, {:key, :ctrl_u}), do: {%{model | input: "", qcursor: 0, completion: nil}, []}
 
   defp query(model, {:key, :ctrl_k}) do
@@ -404,16 +418,27 @@ defmodule Efsql.Tui.App do
 
   defp query(model, {:key, :tab}), do: {complete(model), []}
 
-  defp query(%Model{tenant: t} = model, {:key, :esc}) when t != nil, do: {%{model | mode: :schema}, []}
+  defp query(%Model{tenant: t} = model, {:key, :esc}) when t != nil,
+    do: {%{model | mode: :schema}, []}
+
   defp query(model, {:key, :esc}), do: {%{model | mode: :navigator}, []}
 
   defp query(%Model{input: input} = model, {:key, :enter}) do
     case String.trim(input) do
-      "" -> {model, []}
-      "\\?" -> {%{model | mode: :help, help_return: :query, help_scroll: 0, input: "", qcursor: 0}, []}
-      "\\plan" -> {%{model | show_plan?: not model.show_plan?, input: "", qcursor: 0}, []}
-      "\\set limit " <> n -> set_limit(model, n)
-      sql -> run_query(model, sql)
+      "" ->
+        {model, []}
+
+      "\\?" ->
+        {%{model | mode: :help, help_return: :query, help_scroll: 0, input: "", qcursor: 0}, []}
+
+      "\\plan" ->
+        {%{model | show_plan?: not model.show_plan?, input: "", qcursor: 0}, []}
+
+      "\\set limit " <> n ->
+        set_limit(model, n)
+
+      sql ->
+        run_query(model, sql)
     end
   end
 
@@ -421,8 +446,11 @@ defmodule Efsql.Tui.App do
 
   defp set_limit(model, n) do
     case Integer.parse(String.trim(n)) do
-      {n, ""} when n > 0 -> {%{model | limit: n, input: "", qcursor: 0, flash: {:info, "limit set to #{n}"}}, []}
-      _ -> {%{model | flash: {:error, "usage: \\set limit N"}, input: "", qcursor: 0}, []}
+      {n, ""} when n > 0 ->
+        {%{model | limit: n, input: "", qcursor: 0, flash: {:info, "limit set to #{n}"}}, []}
+
+      _ ->
+        {%{model | flash: {:error, "usage: \\set limit N"}, input: "", qcursor: 0}, []}
     end
   end
 
@@ -462,7 +490,12 @@ defmodule Efsql.Tui.App do
         model
 
       {0, -1} ->
-        %{model | hist_ix: nil, input: model.saved_input, qcursor: String.length(model.saved_input)}
+        %{
+          model
+          | hist_ix: nil,
+            input: model.saved_input,
+            qcursor: String.length(model.saved_input)
+        }
 
       {ix, dir} ->
         %{model | hist_ix: clamp(ix + dir, max_ix + 1)} |> put_hist()
@@ -535,9 +568,20 @@ defmodule Efsql.Tui.App do
 
   defp results(%Model{rows: rows} = model, {:key, :enter}) do
     case Enum.at(rows || [], model.row_cursor) do
-      nil -> {model, []}
+      nil ->
+        {model, []}
+
       row ->
-        model = %{model | mode: :inspector, irow: row, ifield_cursor: 0, ivalue_scroll: 0, ifocus: :fields, ivalue: nil}
+        model = %{
+          model
+          | mode: :inspector,
+            irow: row,
+            ifield_cursor: 0,
+            ivalue_scroll: 0,
+            ifocus: :fields,
+            ivalue: nil
+        }
+
         {model, []}
     end
   end
@@ -569,13 +613,15 @@ defmodule Efsql.Tui.App do
   defp inspector(model, {:char, " "}), do: {scroll_value(model, page(model)), []}
   defp inspector(model, {:char, "b"}), do: {scroll_value(model, -page(model)), []}
 
-  defp inspector(%Model{ifocus: :value} = model, {:char, "g"}), do: {%{model | ivalue_scroll: 0}, []}
+  defp inspector(%Model{ifocus: :value} = model, {:char, "g"}),
+    do: {%{model | ivalue_scroll: 0}, []}
 
   defp inspector(%Model{ifocus: :value} = model, {:char, "G"}) do
     {%{model | ivalue_scroll: max_value_scroll(model)}, []}
   end
 
-  defp inspector(%Model{ifocus: :fields} = model, {:char, "g"}), do: {move_field(model, -model.ifield_cursor), []}
+  defp inspector(%Model{ifocus: :fields} = model, {:char, "g"}),
+    do: {move_field(model, -model.ifield_cursor), []}
 
   defp inspector(%Model{ifocus: :fields} = model, {:char, "G"}) do
     {move_field(model, map_size(model.irow || %{})), []}

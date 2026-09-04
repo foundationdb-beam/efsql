@@ -279,7 +279,8 @@ defmodule Efsql.DevSandbox do
     for i <- 1..30 do
       %Product{
         sku: "SKU-" <> String.pad_leading("#{i}", 4, "0"),
-        name: "#{Enum.at(@items, rem(i, length(@items)))} #{Enum.at(~w[mk1 mk2 mk3 pro], rem(i, 4))}",
+        name:
+          "#{Enum.at(@items, rem(i, length(@items)))} #{Enum.at(~w[mk1 mk2 mk3 pro], rem(i, 4))}",
         category: Enum.at(@categories, rem(i, length(@categories))),
         price: Float.round(5 + :rand.uniform() * 200, 2),
         in_stock: rem(i, 5) != 0
@@ -334,7 +335,10 @@ defmodule Efsql.DevSandbox do
       "notifications" => %{
         "email" => rem(i, 2) == 0,
         "sms" => false,
-        "digest" => %{"cadence" => Enum.at(~w[daily weekly never], rem(i, 3)), "hour" => rem(i, 24)}
+        "digest" => %{
+          "cadence" => Enum.at(~w[daily weekly never], rem(i, 3)),
+          "hour" => rem(i, 24)
+        }
       },
       "editor" => %{
         "font" => Enum.at(["Berkeley Mono", "Iosevka", "SF Mono"], rem(i, 3)),
@@ -354,10 +358,16 @@ defmodule Efsql.DevSandbox do
         city: city,
         country: Enum.at(~w[US DE PT KE JP CA], rem(i, 6)),
         postcode: "#{10_000 + i * 7}",
-        geo: %{lat: Float.round(-60 + :rand.uniform() * 120, 4), lon: Float.round(-180 + :rand.uniform() * 360, 4)}
+        geo: %{
+          lat: Float.round(-60 + :rand.uniform() * 120, 4),
+          lon: Float.round(-180 + :rand.uniform() * 360, 4)
+        }
       },
       links: [
-        %{"rel" => "homepage", "url" => "https://example.com/~#{String.downcase(String.replace(name, " ", "."))}"},
+        %{
+          "rel" => "homepage",
+          "url" => "https://example.com/~#{String.downcase(String.replace(name, " ", "."))}"
+        },
         %{"rel" => "avatar", "url" => "https://cdn.example.com/a/#{i}.png"}
       ],
       flags: MapSet.new(Enum.take_random(~w[verified beta staff trial]a, 2)),

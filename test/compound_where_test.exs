@@ -28,9 +28,7 @@ defmodule EfsqlTest.Integration.CompoundWhere do
     tenant_id = context[:tenant_id]
 
     assert [%{id: "0002"}] =
-             Efsql.all(
-               "select id from #{tenant_id}.users where _ > '0000' and notes = 'foobar';"
-             )
+             Efsql.all("select id from #{tenant_id}.users where _ > '0000' and notes = 'foobar';")
   end
 
   test "unindexed field falls back to scan with residual filter", context do
@@ -55,6 +53,9 @@ defmodule EfsqlTest.Integration.CompoundWhere do
     tenant_id = context[:tenant_id]
 
     # Charles has notes = nil; SQL NULL semantics exclude him from any comparison
-    assert [] = Efsql.all("select id from #{tenant_id}.users where notes < 'zzz' and name = 'Charles';")
+    assert [] =
+             Efsql.all(
+               "select id from #{tenant_id}.users where notes < 'zzz' and name = 'Charles';"
+             )
   end
 end

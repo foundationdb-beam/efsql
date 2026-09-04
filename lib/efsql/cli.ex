@@ -87,12 +87,18 @@ defmodule Efsql.Cli do
   defp handle_input("", state = %__MODULE__{}), do: state
 
   defp handle_input("\\?", state = %__MODULE__{}) do
-    Owl.IO.puts(Owl.Data.tag("""
-    Meta-commands:
-      \\tenants [storage_id]  list tenants (optionally for a specific storage id)
-      \\set limit N           set the default row limit (currently #{state.limit})
-      \\?                     show this help
-    """, :light_black))
+    Owl.IO.puts(
+      Owl.Data.tag(
+        """
+        Meta-commands:
+          \\tenants [storage_id]  list tenants (optionally for a specific storage id)
+          \\set limit N           set the default row limit (currently #{state.limit})
+          \\?                     show this help
+        """,
+        :light_black
+      )
+    )
+
     state
   end
 
@@ -120,7 +126,10 @@ defmodule Efsql.Cli do
           |> Owl.IO.puts()
 
           n = length(tenant_ids)
-          Owl.IO.puts(Owl.Data.tag("(#{n} #{if n == 1, do: "tenant", else: "tenants"})", :light_black))
+
+          Owl.IO.puts(
+            Owl.Data.tag("(#{n} #{if n == 1, do: "tenant", else: "tenants"})", :light_black)
+          )
       end
     rescue
       e -> print_error(e)
@@ -150,6 +159,7 @@ defmodule Efsql.Cli do
           if String.match?(data, ~r/\blimit\b/i),
             do: {data, :all},
             else: {String.replace(data, ~r/;\s*$/, " #{limit_sql};"), state.limit}
+
         {call, rows, tenants} = Efsql.qall(sql, [], state.tenants)
         if state.debug, do: print_debug(call)
         print_table(rows, display_limit)
@@ -243,7 +253,10 @@ defmodule Efsql.Cli do
 
   defp format_value(nil), do: Owl.Data.tag("null", :light_black)
   defp format_value(v) when is_binary(v), do: v
-  defp format_value({:versionstamp, _, _, _} = v), do: to_string(EctoFoundationDB.Versionstamp.to_integer(v))
+
+  defp format_value({:versionstamp, _, _, _} = v),
+    do: to_string(EctoFoundationDB.Versionstamp.to_integer(v))
+
   defp format_value(v), do: inspect(v)
 
   defp print_debug(plan = %Efsql.Physical.Plan{}) do

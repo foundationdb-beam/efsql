@@ -208,7 +208,14 @@ defmodule Efsql.Planner do
 
   # -- IN planning --
 
-  defp plan_in(logical, options, [{:in, in_field, values} = in_pred | extra_ins], rest, indexes, star?) do
+  defp plan_in(
+         logical,
+         options,
+         [{:in, in_field, values} = in_pred | extra_ins],
+         rest,
+         indexes,
+         star?
+       ) do
     residual = extra_ins ++ rest
 
     fanout_ok? =
@@ -273,7 +280,9 @@ defmodule Efsql.Planner do
   defp pk_access({:cmp, :==, _f, {part, :*}}, q, options) do
     id_a = {part, EctoFoundationDB.Versionstamp.min()}
     id_b = {part, EctoFoundationDB.Versionstamp.max()}
-    {:pk_range, q, id_a, id_b, Keyword.merge(options, inclusive_left?: true, inclusive_right?: true)}
+
+    {:pk_range, q, id_a, id_b,
+     Keyword.merge(options, inclusive_left?: true, inclusive_right?: true)}
   end
 
   defp pk_access({:cmp, :==, _f, id}, q, options) do
@@ -324,7 +333,8 @@ defmodule Efsql.Planner do
   end
 
   defp ensure_sort_evaluable!({_dir, @pk_field}) do
-    raise Unsupported, "order by '_' is not supported; order by the primary key field name instead"
+    raise Unsupported,
+          "order by '_' is not supported; order by the primary key field name instead"
   end
 
   defp ensure_sort_evaluable!(_), do: :ok
