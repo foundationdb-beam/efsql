@@ -20,8 +20,44 @@ defmodule Efsql.RenderTest do
     assert Render.cell(vs) == "#Versionstamp<42>"
   end
 
-  test "cells truncate" do
-    assert Render.cell(String.duplicate("x", 50), 10) == "xxxxxxxxx…"
+  test "cells truncate the way the duckdb CLI does" do
+    # duckdb counts the ellipsis against the column and stops before filling
+    # it, so a truncated cell sits one column narrower than the column
+    assert Render.cell(String.duplicate("x", 50), 10) == "xxxxxxxx…"
+    assert Render.cell(String.duplicate("x", 50), 20) == String.duplicate("x", 18) <> "…"
+    assert Render.width(Render.cell(String.duplicate("x", 50), 10)) == 9
+  end
+
+  test "a cell that fits is left alone" do
+    assert Render.cell("abc", 10) == "abc"
+    assert Render.truncate_cell("abc", 3) == "abc"
+  end
+
+  describe "width" do
+    test "ascii is one column per character" do
+      assert Render.width("abc") == 3
+      assert Render.width("") == 0
+    end
+
+    test "east asian characters take two columns" do
+      assert Render.width("日本語") == 6
+      assert Render.width("ｆｕｌｌ") == 8
+    end
+
+    test "accents do not add a column, composed or decomposed" do
+      assert Render.width("ábc") == 3
+      assert Render.width("a\u0301bc") == 3
+    end
+
+    test "truncating respects display width" do
+      assert Render.width(Render.truncate("日本語です", 6)) <= 6
+      assert Render.truncate("日本語", 6) == "日本語"
+    end
+
+    test "padding fills to a display width, not a character count" do
+      assert Render.width(Render.pad("日本", 8)) == 8
+      assert Render.pad("ab", 5, :right) == "   ab"
+    end
   end
 
   test "maps and lists inspect" do

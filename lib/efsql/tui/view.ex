@@ -10,6 +10,7 @@ defmodule Efsql.Tui.View do
   """
 
   alias Efsql.Discover
+  alias Efsql.Tui.Columns
   alias Efsql.Render
   alias Efsql.Tui.App
   alias Efsql.Tui.App.Model
@@ -252,13 +253,14 @@ defmodule Efsql.Tui.View do
   end
 
   defp results_lines(model, height, cols) do
-    # shrink from the right if the row would overflow the screen
-    widths = shrink(model.col_widths, cols - 2)
+    {widths, column_map} = Columns.layout(model.col_widths, cols)
+    aligns = Enum.map(column_map, &align_of(model, &1))
     visible = max(height - 2, 1)
     count = length(model.rows)
     start = if model.row_cursor >= visible, do: model.row_cursor - visible + 1, else: 0
 
-    header = [{:head, row_text(Enum.map(model.columns, &to_string/1), widths)}]
+    names = Enum.map(column_map, &header_of(model, &1))
+    header = [{:head, row_text(names, widths, aligns)}]
 
     rows =
       model.cells
@@ -266,33 +268,54 @@ defmodule Efsql.Tui.View do
       |> Enum.with_index(start)
       |> Enum.map(fn {cells, ix} ->
         style = if model.qfocus == :results and ix == model.row_cursor, do: :sel, else: :none
-        [{style, row_text(cells, widths)}]
+        [{style, row_text(select(cells, column_map), widths, aligns)}]
       end)
 
     footer =
       [
         {:dim,
          " (#{count} rows, #{model.elapsed_ms} ms)" <>
-           if(model.qfocus == :input and count > 0, do: " — Tab with empty input to browse rows", else: "")}
+           hidden_note(model, column_map) <> browse_hint(model, count)}
       ]
 
     [header] ++ rows ++ [footer]
   end
 
-  defp shrink(widths, budget) do
-    total = Enum.sum(widths) + 2 * length(widths)
+  defp header_of(_model, :split), do: "…"
+  defp header_of(model, {:col, ix}), do: model.columns |> Enum.at(ix) |> to_string()
 
-    if total <= budget or length(widths) <= 1 do
-      widths
-    else
-      widths |> Enum.reverse() |> tl() |> Enum.reverse() |> shrink(budget)
-    end
+  defp align_of(_model, :split), do: :left
+  defp align_of(model, {:col, ix}), do: Enum.at(model.col_align, ix, :left)
+
+  defp select(cells, column_map) do
+    cells = List.to_tuple(cells)
+
+    Enum.map(column_map, fn
+      :split -> "…"
+      {:col, ix} -> elem(cells, ix)
+    end)
   end
 
-  defp row_text(cells, widths) do
-    cells
-    |> Enum.zip(widths)
-    |> Enum.map_join("  ", fn {cell, w} -> pad(Render.truncate(cell, w), w) end)
+  # Dropped columns are reported the way DuckDB reports them: a bare `…`
+  # column otherwise reads as truncated data rather than a layout decision.
+  defp hidden_note(model, column_map) do
+    total = length(model.columns)
+    shown = Enum.count(column_map, &match?({:col, _}, &1))
+
+    if shown < total, do: " — #{total} columns (#{shown} shown)", else: ""
+  end
+
+  defp browse_hint(%Model{qfocus: :input}, count) when count > 0,
+    do: " — Tab with empty input to browse rows"
+
+  defp browse_hint(_model, _count), do: ""
+
+  defp row_text(cells, widths, aligns) do
+    [cells, widths, aligns]
+    |> Enum.zip()
+    |> Enum.map_join("  ", fn {cell, w, align} ->
+      cell |> Render.truncate_cell(w) |> Render.pad(w, align)
+    end)
     |> then(&(" " <> &1))
   end
 
@@ -374,18 +397,14 @@ defmodule Efsql.Tui.View do
 
   defp plain(segments), do: Enum.map_join(segments, "", fn {_s, t} -> t end)
 
-  defp pad(text, width) do
-    text
-    |> Render.truncate(width)
-    |> String.pad_trailing(width)
-  end
+  defp pad(text, width), do: Render.pad(text, width)
 
   @doc "Renders one line of `{style, text}` segments to an ANSI binary within `cols`."
   def render_line(segments, cols) do
     {iodata, _remaining} =
       Enum.reduce(segments, {[], cols}, fn {style, text}, {acc, remaining} ->
         text = Render.truncate(text, remaining)
-        used = String.length(text)
+        used = Render.width(text)
 
         styled =
           case Map.fetch!(@styles, style) do

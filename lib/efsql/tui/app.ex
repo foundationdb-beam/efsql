@@ -15,10 +15,11 @@ defmodule Efsql.Tui.App do
   alias Efsql.Render
   alias Efsql.Tui.Help
 
-  # Widest a results column can grow. Sized so a canonical UUID (36 chars)
-  # fits without an ellipsis, since primary keys are the column you most
-  # often need to read in full and then copy into another query.
-  @max_col_width 36
+  # Widest a cell is ever rendered. The width a column actually gets is chosen
+  # later against the real terminal width, by `Efsql.Tui.Columns`; this only
+  # bounds the up-front rendering work, and no terminal column is usefully
+  # wider than this. The Inspector shows a value in full.
+  @render_cap 200
 
   defmodule Model do
     defstruct size: {24, 80},
@@ -58,6 +59,7 @@ defmodule Efsql.Tui.App do
               # cell strings per row, and each column's natural width
               cells: [],
               col_widths: [],
+              col_align: [],
               plan: nil,
               qerror: nil,
               elapsed_ms: nil,
@@ -713,6 +715,7 @@ defmodule Efsql.Tui.App do
         columns: columns,
         cells: cells,
         col_widths: col_widths(columns, cells),
+        col_align: col_aligns(rows, columns),
         plan: plan,
         qerror: nil,
         elapsed_ms: elapsed,
@@ -738,19 +741,32 @@ defmodule Efsql.Tui.App do
   # made the editor lag on wide or large rows.
   defp render_cells(rows, columns) do
     Enum.map(rows, fn row ->
-      Enum.map(columns, &Render.cell(Map.get(row, &1), @max_col_width))
+      Enum.map(columns, &Render.cell(Map.get(row, &1), @render_cap))
     end)
   end
 
+  # Natural widths, uncapped: a column is as wide as its widest value, and
+  # `Efsql.Tui.Columns` narrows things only when the row will not fit.
   defp col_widths(columns, cells) do
-    header = Enum.map(columns, &(&1 |> to_string() |> String.length()))
+    header = Enum.map(columns, &(&1 |> to_string() |> Render.width()))
 
-    cells
-    |> Enum.reduce(header, fn row, widths ->
-      Enum.zip_with(row, widths, &max(String.length(&1), &2))
+    Enum.reduce(cells, header, fn row, widths ->
+      Enum.zip_with(row, widths, &max(Render.width(&1), &2))
     end)
-    |> Enum.map(&min(&1, @max_col_width))
   end
+
+  # DuckDB right-aligns a column whose type is numeric. Rows here are
+  # schemaless, so a column earns it when every value it actually holds is a
+  # number.
+  defp col_aligns(rows, columns) do
+    Enum.map(columns, fn col ->
+      values = rows |> Enum.map(&Map.get(&1, col)) |> Enum.reject(&is_nil/1)
+
+      if values != [] and Enum.all?(values, &numeric?/1), do: :right, else: :left
+    end)
+  end
+
+  defp numeric?(value), do: is_number(value) or match?(%Decimal{}, value)
 
   defp error_text(%{__exception__: true} = e), do: Exception.message(e)
   defp error_text(err), do: inspect(err)

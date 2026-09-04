@@ -6,17 +6,25 @@ defmodule Efsql.Render do
   """
 
   def cell(value, width \\ 40) do
-    # A cell only ever shows `width` graphemes, so a big string is cut to a
-    # bounded prefix before anything walks it: the view renders hundreds of
-    # cells per keystroke, and checking printability of a 50KB value for each
-    # of them is what made typing lag.
+    # A cell only ever shows `width` columns, so a big string is cut to a
+    # bounded prefix before anything walks it: checking printability of a 50KB
+    # value for every cell is what used to make typing lag.
     value
     |> cell_prefix(width)
     |> render(width, false)
     # A cell is one line by contract: a value containing newlines or tabs would
     # otherwise break the frame layout when written to the terminal.
-    |> String.replace(~r/[\r\n\t]+/, " ")
-    |> truncate(width)
+    |> collapse_breaks()
+    |> truncate_cell(width)
+  end
+
+  # The regex is the expensive part of rendering a cell, and almost no value
+  # contains a break at all, so look before running it.
+  defp collapse_breaks(text) do
+    case :binary.match(text, ["\r", "\n", "\t"]) do
+      :nomatch -> text
+      _ -> String.replace(text, ~r/[\r\n\t]+/, " ")
+    end
   end
 
   # Generous bytes-per-grapheme budget: combining marks and emoji sequences
@@ -154,11 +162,118 @@ defmodule Efsql.Render do
     |> Enum.reverse()
   end
 
+  @doc """
+  The width of `text` in terminal columns.
+
+  Not its length in characters: a CJK ideograph occupies two columns and a
+  combining mark none, so measuring by grapheme count misaligns every column
+  to the right of such a value. Uses the same `wcwidth` table the terminal
+  itself does, via OTP, with a fast path for the ASCII that most values are.
+  """
+  def width(text) when is_binary(text) do
+    if ascii?(text), do: byte_size(text), else: cluster_width(text, 0)
+  end
+
+  defp ascii?(<<>>), do: true
+  defp ascii?(<<b, rest::binary>>) when b < 128, do: ascii?(rest)
+  defp ascii?(_), do: false
+
+  # Measured per grapheme cluster, so a combining mark costs nothing on its
+  # own and an accented letter stays one column wide. `is_wide/1` reads the
+  # Unicode East Asian Width table; libc's wcwidth (via prim_tty) was the
+  # obvious alternative but answers by the process locale, reporting "á" as
+  # zero-width whenever LANG is unset.
+  defp cluster_width(text, acc) do
+    case String.next_grapheme(text) do
+      nil -> acc
+      {grapheme, rest} -> cluster_width(rest, acc + grapheme_width(grapheme))
+    end
+  end
+
+  defp grapheme_width(<<cp::utf8, _rest::binary>>) do
+    if :unicode_util.is_wide(cp), do: 2, else: 1
+  rescue
+    _ -> 1
+  end
+
+  defp grapheme_width(_grapheme), do: 1
+
+  @doc """
+  Cuts `string` to `width` columns, ending in an ellipsis when it does not fit.
+  The result fills the width exactly, for chrome that has to reach a margin.
+  """
   def truncate(string, width) do
-    if String.length(string) > width do
-      String.slice(string, 0, max(width - 1, 0)) <> "…"
-    else
+    cond do
+      width <= 0 -> ""
+      ascii?(string) -> ascii_truncate(string, width, width - 1)
+      fits?(string, width) -> string
+      true -> take_width(string, width - 1) <> "…"
+    end
+  end
+
+  defp ascii_truncate(string, width, keep) do
+    if byte_size(string) <= width do
       string
+    else
+      binary_part(string, 0, max(keep, 0)) <> "…"
+    end
+  end
+
+  @doc """
+  Cuts a table cell to a column of `col_width`, the way the DuckDB CLI does.
+
+  DuckDB counts the ellipsis against the budget and then stops *before*
+  filling the column, so a truncated cell renders one column narrower than an
+  untruncated one. That is reproduced here deliberately, so column contents
+  line up with what `duckdb` prints for the same data.
+  """
+  def truncate_cell(string, col_width) do
+    cond do
+      col_width <= 0 -> ""
+      ascii?(string) -> ascii_truncate(string, col_width, col_width - 2)
+      fits?(string, col_width) -> string
+      true -> take_width(string, col_width - 2) <> "…"
+    end
+  end
+
+  # Whether `string` fits in `limit` columns, without measuring any further
+  # than that: a cell may hold far more text than the column can ever show.
+  defp fits?(_string, limit) when limit < 0, do: false
+
+  defp fits?(string, limit) do
+    case String.next_grapheme(string) do
+      nil -> true
+      {grapheme, rest} -> fits?(rest, limit - grapheme_width(grapheme))
+    end
+  end
+
+  # The widest prefix of `string` that fits in `limit` columns. Walks only as
+  # far as the limit, never the whole value.
+  defp take_width(_string, limit) when limit <= 0, do: ""
+
+  defp take_width(string, limit), do: take_width(string, limit, [])
+
+  defp take_width(string, limit, acc) do
+    case String.next_grapheme(string) do
+      nil ->
+        IO.iodata_to_binary(Enum.reverse(acc))
+
+      {grapheme, rest} ->
+        case limit - grapheme_width(grapheme) do
+          left when left >= 0 -> take_width(rest, left, [grapheme | acc])
+          _ -> IO.iodata_to_binary(Enum.reverse(acc))
+        end
+    end
+  end
+
+  @doc "Pads `text` to `width` columns, cutting it first if it overflows."
+  def pad(text, width, align \\ :left) do
+    text = truncate(text, width)
+    fill = String.duplicate(" ", max(width - width(text), 0))
+
+    case align do
+      :left -> text <> fill
+      :right -> fill <> text
     end
   end
 
