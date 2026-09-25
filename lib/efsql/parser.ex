@@ -7,6 +7,7 @@ defmodule Efsql.Parser do
 
   alias Efsql.Exception.Unsupported
   alias Efsql.Logical
+  alias Efsql.Types
 
   @comparison_ops ~w[= >= <= > <]a
 
@@ -153,6 +154,13 @@ defmodule Efsql.Parser do
     value |> :erlang.list_to_binary() |> String.to_float()
   end
 
+  # 'value'::type and cast('value' as type) -- see Efsql.Types
+  defp param({:"::", _meta, [value, type]}), do: Types.cast(type_name(type), param(value))
+
+  defp param({:cast, _meta, [{:paren, _paren_meta, [{:as, _as_meta, [value, type]}]}]}) do
+    Types.cast(type_name(type), param(value))
+  end
+
   defp param({true, _meta, []}), do: true
   defp param({false, _meta, []}), do: false
   defp param({nil, _meta, []}), do: nil
@@ -166,6 +174,14 @@ defmodule Efsql.Parser do
     {:erlang.list_to_binary(part),
      EctoFoundationDB.Versionstamp.from_integer(:erlang.list_to_integer(n))}
   end
+
+  # Non-reserved words lex as identifiers, reserved ones (e.g. `date`) as
+  # their own token.
+  defp type_name({tag, _meta, name}) when tag in ~w[ident double_quote]a do
+    name |> List.to_string() |> String.downcase()
+  end
+
+  defp type_name({tag, _meta, []}) when is_atom(tag), do: Atom.to_string(tag)
 
   defp sql_op(:=), do: :==
   defp sql_op(op), do: op

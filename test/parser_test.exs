@@ -1,6 +1,7 @@
 defmodule Efsql.ParserTest do
   use ExUnit.Case, async: true
 
+  alias Efsql.Exception.Unsupported
   alias Efsql.Logical
   alias Efsql.Parser
 
@@ -112,6 +113,58 @@ defmodule Efsql.ParserTest do
 
       assert %Logical.Select{predicates: [{:in, :qty, [1, 2, 3]}]} =
                parse("select id from t.users where qty in (1, 2, 3);")
+    end
+
+    test "atom literal" do
+      assert %Logical.Select{predicates: [{:cmp, :==, :status, :active}]} =
+               parse("select id from t.users where status = 'active'::atom;")
+
+      assert %Logical.Select{predicates: [{:cmp, :==, :status, :active}]} =
+               parse("select id from t.users where status = cast('active' as atom);")
+
+      assert %Logical.Select{predicates: [{:cmp, :==, :status, :active}]} =
+               parse("select id from t.users where status = 'active'::ATOM;")
+    end
+
+    test "atom literal is distinct from a string" do
+      assert %Logical.Select{predicates: [{:cmp, :==, :status, "active"}]} =
+               parse("select id from t.users where status = 'active';")
+    end
+
+    test "atom literal keeps case and module names" do
+      assert %Logical.Select{predicates: [{:cmp, :==, :kind, Foo.Bar}]} =
+               parse("select id from t.users where kind = 'Elixir.Foo.Bar'::atom;")
+    end
+
+    test "atom literals in compound predicates" do
+      assert %Logical.Select{
+               predicates: [{:cmp, :==, :status, :active}, {:cmp, :==, :name, "Alice"}]
+             } =
+               parse("select id from t.users where status = 'active'::atom and name = 'Alice';")
+
+      assert %Logical.Select{predicates: [{:in, :status, [:active, :pending]}]} =
+               parse("select id from t.users where status in ('active'::atom, 'pending'::atom);")
+
+      assert %Logical.Select{predicates: [{:cmp, :>=, :status, :a}, {:cmp, :<, :status, :m}]} =
+               parse("select id from t.users where status >= 'a'::atom and status < 'm'::atom;")
+    end
+
+    test "unknown type raises" do
+      assert_raise Unsupported, ~r/Unknown type 'widget'/, fn ->
+        parse("select id from t.users where status = 'active'::widget;")
+      end
+    end
+
+    test "atom cast of a non-string raises" do
+      assert_raise Unsupported, ~r/Cannot cast 1 to atom/, fn ->
+        parse("select id from t.users where status = 1::atom;")
+      end
+    end
+
+    test "like on an atom raises" do
+      assert_raise Unsupported, fn ->
+        parse("select id from t.users where status like 'a%'::atom;")
+      end
     end
 
     test "versionstamp partition scan value" do

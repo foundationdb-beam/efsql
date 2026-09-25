@@ -223,6 +223,25 @@ select col_a, col_b from tenant_id.table_name where index_col between 'baz' and 
 
 Since efsql doesn't have access to the Ecto schema, type checking is loosened. For example, a `naive_datetime` indexed column must be queried using its string representation.
 
+### Typed literals
+
+A quoted literal is always a string. To compare against an Elixir term that
+has no SQL literal, annotate the literal with a type using the PostgreSQL cast
+operator `::`, or the standard `CAST(... AS ...)`:
+
+```sql
+-- atoms, e.g. an Ecto.Enum column
+select col_a from tenant_id.table_name where status = 'active'::atom;
+select col_a from tenant_id.table_name where status = cast('active' as atom);
+select col_a from tenant_id.table_name where status in ('active'::atom, 'pending'::atom);
+
+-- module names are atoms too
+select col_a from tenant_id.table_name where kind = 'Elixir.MyApp.Widget'::atom;
+```
+
+Supported types: `atom`. `BETWEEN` and `LIKE` don't accept typed literals;
+write a range as `status >= 'a'::atom and status < 'm'::atom` instead.
+
 ### Limit
 
 ```sql
