@@ -1,5 +1,5 @@
 defmodule Efsql.Cli do
-  defstruct args: [], history: [], debug: false, tenants: %{}, settings: %Efsql.Settings{}
+  defstruct args: [], history: [], debug: false, session: %Efsql.Session{}
 
   use GenServer
 
@@ -92,7 +92,7 @@ defmodule Efsql.Cli do
         """
         Meta-commands:
           \\tenants [storage_id]  list tenants (optionally for a specific storage id)
-        #{settings_help(state.settings)}
+        #{settings_help(state.session.settings)}
           \\?                     show this help
         """,
         :light_black
@@ -139,10 +139,10 @@ defmodule Efsql.Cli do
   end
 
   defp handle_input("\\set " <> rest, state = %__MODULE__{}) do
-    case Efsql.Settings.set(state.settings, rest) do
+    case Efsql.Settings.set(state.session.settings, rest) do
       {:ok, settings, message} ->
         Owl.IO.puts(Owl.Data.tag(message, :light_black))
-        %__MODULE__{state | settings: settings}
+        %__MODULE__{state | session: %{state.session | settings: settings}}
 
       {:error, usage} ->
         print_error(usage)
@@ -151,29 +151,28 @@ defmodule Efsql.Cli do
   end
 
   defp handle_input(data, state = %__MODULE__{}) do
-    limit = state.settings.limit
+    limit = state.session.settings.limit
     limit_sql = "limit #{limit + 1}"
 
-    {tenants} =
+    session =
       try do
         {sql, display_limit} =
           if String.match?(data, ~r/\blimit\b/i),
             do: {data, :all},
             else: {String.replace(data, ~r/;\s*$/, " #{limit_sql};"), limit}
 
-        options = Efsql.Settings.query_options(state.settings)
-        {call, rows, tenants} = Efsql.qall(sql, options, state.tenants)
-        if state.debug, do: print_debug(call)
-        print_table(rows, display_limit, Efsql.Render.columns(call, rows))
-        print_snapshots(Efsql.Fanout.transactions(call))
-        {tenants}
+        {result, session} = Efsql.Session.run(state.session, sql)
+        if state.debug, do: print_debug(result.plan)
+        print_table(result.rows, display_limit, result.columns)
+        print_transactions(result.transactions)
+        session
       rescue
         e ->
           print_error(e)
-          {state.tenants}
+          state.session
       end
 
-    %__MODULE__{state | history: [data | state.history], tenants: tenants}
+    %__MODULE__{state | history: [data | state.history], session: session}
   end
 
   def init_ecto_foundationdb!(args) do
@@ -264,9 +263,9 @@ defmodule Efsql.Cli do
     end)
   end
 
-  defp print_snapshots(1), do: :ok
+  defp print_transactions(1), do: :ok
 
-  defp print_snapshots(n) do
+  defp print_transactions(n) do
     Owl.IO.puts(Owl.Data.tag("(read in #{n} transactions)", :yellow))
   end
 

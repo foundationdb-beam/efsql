@@ -31,5 +31,6 @@ defmodule Efsql.Physical do
 
   defmodule Plan do
     defstruct access: nil, ops: [], columns: nil
+    @type t :: %__MODULE__{access: tuple(), ops: [tuple()], columns: [atom()] | nil}
   end
 end

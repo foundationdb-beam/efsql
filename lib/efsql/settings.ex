@@ -46,7 +46,7 @@ defmodule Efsql.Settings do
     ]
   end
 
-  @doc "The options `Efsql.qall/3` takes for these settings."
+  @doc "The query options for these settings (see `Efsql.Session.run/3`)."
   @spec query_options(t()) :: keyword()
   def query_options(%__MODULE__{tenant_batch: nil}), do: []
   def query_options(%__MODULE__{tenant_batch: n}), do: [tenant_batch: n]

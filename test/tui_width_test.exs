@@ -7,6 +7,7 @@ defmodule Efsql.Tui.WidthTest do
   alias Efsql.Tui.View
 
   @plan %Efsql.Physical.Plan{access: {:pk_range, nil, nil, nil, []}, ops: []}
+  @session %Efsql.Session{tenant: :t, tenant_name: "demo", storage_id: "s"}
 
   defp results(rows, size) do
     {model, _} =
@@ -15,11 +16,9 @@ defmodule Efsql.Tui.WidthTest do
           size: size,
           mode: :query,
           busy: "q",
-          tenant: :t,
-          tenant_id: "demo",
-          storage_id: "s"
+          session: @session
         },
-        {:done, :query, {:ok, {@plan, rows, %{}, 1}}}
+        {:done, :query, {:ok, {Efsql.Result.new(@plan, rows, 1), @session}}}
       )
 
     model

@@ -13,6 +13,10 @@ defmodule Efsql do
 
   A query across tenants (`*.table`) is planned by `Efsql.Fanout` instead,
   which plans each tenant's read with `Efsql.Planner`.
+
+  The CLI and the TUI run statements in an `Efsql.Session` (open tenants,
+  settings, the active tenant) and show the `Efsql.Result` it returns.
+  `qall/3` and `all/2` run one outside any session.
   """
 
   def all(sql, options \\ []) do
@@ -20,8 +24,14 @@ defmodule Efsql do
     result
   end
 
+  @doc """
+  Runs one statement outside any session, reusing and returning the
+  `tenants` cache: `{plan, rows, tenants}`. See `Efsql.Session` for the
+  CLI's and TUI's way in.
+  """
   def qall(sql, options \\ [], tenants \\ %{}) do
-    sql |> Efsql.Parser.sql_to_logical() |> run_logical(options, tenants)
+    {result, session} = Efsql.Session.run(%Efsql.Session{tenants: tenants}, sql, options)
+    {result.plan, result.rows, session.tenants}
   end
 
   @doc """

@@ -38,10 +38,10 @@ defmodule EfsqlTest.Integration.Discover do
   test "session qall runs unqualified statements against the active tenant", context do
     tenant = context[:tenant]
 
-    assert {_plan, [%{name: "Alice"}], _tenants} =
-             Efsql.Tui.Session.qall(
-               "select id, name from users where name = 'Alice';",
-               %{tenant: tenant, tenants: %{}}
+    assert {%Efsql.Result{rows: [%{name: "Alice"}]}, %Efsql.Session{}} =
+             Efsql.Session.run(
+               %Efsql.Session{tenant: tenant},
+               "select id, name from users where name = 'Alice';"
              )
   end
 end
