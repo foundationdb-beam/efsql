@@ -36,7 +36,7 @@ defmodule Efsql.SQL.PropertyTest do
         ["select ", " from ", " where ", " and ", "--", "/*", "*/", "::", <<0xFF>>, <<0>>]
 
     for _ <- 1..@runs do
-      sql = Enum.map_join(1..Enum.random(0..40), fn _ -> Enum.random(alphabet) end)
+      sql = Enum.map_join(1..Enum.random(0..40)//1, fn _ -> Enum.random(alphabet) end)
       check(sql)
     end
   end
