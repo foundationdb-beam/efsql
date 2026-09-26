@@ -26,9 +26,6 @@ defmodule Efsql.Tui.App do
               mode: :navigator,
               flash: nil,
               busy: nil,
-              limit: 15,
-              # tenants per transaction for *.table queries; nil is one transaction
-              tenant_batch: nil,
               cluster_file: nil,
               # navigator
               nav_path: [],
@@ -38,11 +35,8 @@ defmodule Efsql.Tui.App do
               # entries matching the filter, recomputed only when either
               # changes (see `refilter/1`), so a held arrow key stays O(1)
               nav_visible: [],
-              # session
-              storage_id: nil,
-              tenant_id: nil,
-              tenant: nil,
-              tenants: %{},
+              # the active tenant, open tenants and settings (see Efsql.Session)
+              session: %Efsql.Session{},
               # schema browser
               sources: nil,
               src_cursor: 0,
@@ -55,16 +49,14 @@ defmodule Efsql.Tui.App do
               history: [],
               hist_ix: nil,
               saved_input: "",
-              rows: nil,
-              columns: [],
+              # the last query's Efsql.Result, nil before the first
+              result: nil,
               # rows rendered once per query result (see `done/3`): a list of
               # cell strings per row, and each column's natural width
               cells: [],
               col_widths: [],
               col_align: [],
-              plan: nil,
               qerror: nil,
-              elapsed_ms: nil,
               row_cursor: 0,
               row_scroll: 0,
               qfocus: :input,
@@ -179,7 +171,8 @@ defmodule Efsql.Tui.App do
     {model, [load_nav(model)]}
   end
 
-  defp navigator(%Model{tenant: tenant} = model, {:key, :esc}) when tenant != nil do
+  defp navigator(%Model{session: %Efsql.Session{tenant: tenant}} = model, {:key, :esc})
+       when tenant != nil do
     {%{model | mode: :schema}, []}
   end
 
@@ -233,24 +226,8 @@ defmodule Efsql.Tui.App do
   end
 
   defp activate(model, storage_id, tenant_id) do
-    fun = fn ->
-      Discover.ensure_storage_cache(storage_id)
-      db = Ecto.Adapters.FoundationDB.db(Efsql.Repo)
-      config = Keyword.put(Efsql.Repo.config(), :storage_id, storage_id)
-
-      unless EctoFoundationDB.Tenant.Backend.exists?(db, tenant_id, config) do
-        raise "Tenant '#{tenant_id}' does not exist"
-      end
-
-      # migrate: false — see Efsql.resolve_tenant/2; the TUI never writes.
-      tenant =
-        EctoFoundationDB.Tenant.open(Efsql.Repo, tenant_id,
-          storage_id: storage_id,
-          migrate: false
-        )
-
-      {storage_id, tenant_id, tenant}
-    end
+    session = model.session
+    fun = fn -> Efsql.Session.activate(session, storage_id, tenant_id) end
 
     {%{model | busy: "opening #{tenant_id}"}, [{:task, :activate, fun}]}
   end
@@ -286,7 +263,7 @@ defmodule Efsql.Tui.App do
     with source when source != nil <- current_source(model),
          %Discover.Schema{fields: fields} <- model.schemas[source],
          %{name: field} <- Enum.at(fields, model.field_cursor) do
-      input = "select #{field} from #{source} limit #{model.limit};"
+      input = "select #{field} from #{source} limit #{model.session.settings.limit};"
       {%{model | mode: :query, input: input, qcursor: String.length(input), qfocus: :input}, []}
     else
       _ -> {model, []}
@@ -296,7 +273,7 @@ defmodule Efsql.Tui.App do
   defp schema(model, {:char, "q"}), do: {%{model | mode: :query}, []}
   defp schema(model, {:char, "t"}), do: {%{model | mode: :navigator}, []}
 
-  defp schema(%Model{tenant: t} = model, {:key, :esc}) when t != nil,
+  defp schema(%Model{session: %Efsql.Session{tenant: t}} = model, {:key, :esc}) when t != nil,
     do: {%{model | mode: :navigator}, []}
 
   defp schema(model, {:char, "r"}) do
@@ -354,7 +331,7 @@ defmodule Efsql.Tui.App do
   def current_source(_), do: nil
 
   defp sample_task(model, source) do
-    tenant = model.tenant
+    tenant = model.session.tenant
     key = schema_cache_key(model, source)
 
     {:task, {:schema, source},
@@ -366,7 +343,7 @@ defmodule Efsql.Tui.App do
   end
 
   defp schema_cache_key(model, source) do
-    {model.cluster_file, model.storage_id, model.tenant_id, source}
+    {model.cluster_file, model.session.storage_id, model.session.tenant_name, source}
   end
 
   defp put_schema(model, source, schema) do
@@ -414,13 +391,13 @@ defmodule Efsql.Tui.App do
   defp query(model, {:key, :up}), do: {history(model, 1), []}
   defp query(model, {:key, :down}), do: {history(model, -1), []}
 
-  defp query(%Model{input: "", rows: rows} = model, {:key, :tab}) when is_list(rows) do
+  defp query(%Model{input: "", result: %Efsql.Result{}} = model, {:key, :tab}) do
     {%{model | qfocus: :results}, []}
   end
 
   defp query(model, {:key, :tab}), do: {complete(model), []}
 
-  defp query(%Model{tenant: t} = model, {:key, :esc}) when t != nil,
+  defp query(%Model{session: %Efsql.Session{tenant: t}} = model, {:key, :esc}) when t != nil,
     do: {%{model | mode: :schema}, []}
 
   defp query(model, {:key, :esc}), do: {%{model | mode: :navigator}, []}
@@ -436,11 +413,8 @@ defmodule Efsql.Tui.App do
       "\\plan" ->
         {%{model | show_plan?: not model.show_plan?, input: "", qcursor: 0}, []}
 
-      "\\set limit " <> n ->
-        set_limit(model, n)
-
-      "\\set tenant_batch " <> n ->
-        set_tenant_batch(model, n)
+      "\\set " <> text ->
+        set(model, text)
 
       sql ->
         run_query(model, sql)
@@ -449,47 +423,24 @@ defmodule Efsql.Tui.App do
 
   defp query(model, _msg), do: {model, []}
 
-  defp set_limit(model, n) do
-    case Integer.parse(String.trim(n)) do
-      {n, ""} when n > 0 ->
-        {%{model | limit: n, input: "", qcursor: 0, flash: {:info, "limit set to #{n}"}}, []}
+  defp set(model, text) do
+    model = %{model | input: "", qcursor: 0}
 
-      _ ->
-        {%{model | flash: {:error, "usage: \\set limit N"}, input: "", qcursor: 0}, []}
-    end
-  end
+    case Efsql.Settings.set(model.session.settings, text) do
+      {:ok, settings, message} ->
+        session = %{model.session | settings: settings}
+        {%{model | session: session, flash: {:info, message}}, []}
 
-  defp set_tenant_batch(model, n) do
-    case {String.trim(n), Integer.parse(String.trim(n))} do
-      {"off", _} ->
-        {%{model | tenant_batch: nil, input: "", qcursor: 0, flash: {:info, "tenant_batch off"}},
-         []}
-
-      {_, {n, ""}} when n > 0 ->
-        flash = {:info, "tenant_batch set to #{n}"}
-        {%{model | tenant_batch: n, input: "", qcursor: 0, flash: flash}, []}
-
-      _ ->
-        flash = {:error, "usage: \\set tenant_batch N|off"}
-        {%{model | flash: flash, input: "", qcursor: 0}, []}
+      {:error, usage} ->
+        {%{model | flash: {:error, usage}}, []}
     end
   end
 
   defp run_query(model, sql) do
     sql = if String.ends_with?(sql, ";"), do: sql, else: sql <> ";"
 
-    session = %{
-      tenant: model.tenant,
-      tenants: model.tenants,
-      storage_id: model.storage_id,
-      tenant_batch: model.tenant_batch
-    }
-
-    fun = fn ->
-      started = System.monotonic_time(:millisecond)
-      {plan, rows, tenants} = Efsql.Tui.Session.qall(sql, session)
-      {plan, rows, tenants, System.monotonic_time(:millisecond) - started}
-    end
+    session = model.session
+    fun = fn -> Efsql.Session.run(session, sql) end
 
     model = %{
       model
@@ -593,8 +544,8 @@ defmodule Efsql.Tui.App do
     {move_row(model, if(c == "j", do: 1, else: -1)), []}
   end
 
-  defp results(%Model{rows: rows} = model, {:key, :enter}) do
-    case Enum.at(rows || [], model.row_cursor) do
+  defp results(model, {:key, :enter}) do
+    case Enum.at(result_rows(model), model.row_cursor) do
       nil ->
         {model, []}
 
@@ -616,9 +567,12 @@ defmodule Efsql.Tui.App do
   defp results(model, _msg), do: {model, []}
 
   defp move_row(model, delta) do
-    count = length(model.rows || [])
+    count = length(result_rows(model))
     %{model | row_cursor: clamp(model.row_cursor + delta, count)}
   end
+
+  defp result_rows(%Model{result: %Efsql.Result{rows: rows}}), do: rows
+  defp result_rows(_model), do: []
 
   # -- inspector --
 
@@ -722,7 +676,10 @@ defmodule Efsql.Tui.App do
   The inspected row's fields: in select-list order when the query has one,
   else sorted.
   """
-  def inspector_fields(%Model{irow: row, plan: %Efsql.Physical.Plan{columns: [_ | _] = columns}}) do
+  def inspector_fields(%Model{
+        irow: row,
+        result: %Efsql.Result{plan: %Efsql.Physical.Plan{columns: [_ | _] = columns}}
+      }) do
     listed = Enum.filter(columns, &Map.has_key?(row, &1))
     listed ++ Enum.sort(Map.keys(row) -- listed)
   end
@@ -759,20 +716,17 @@ defmodule Efsql.Tui.App do
     {refilter(%{model | busy: nil, nav_entries: Enum.sort(entries)}), []}
   end
 
-  defp done(model, :activate, {:ok, {storage_id, tenant_id, tenant}}) do
+  defp done(model, :activate, {:ok, %Efsql.Session{tenant: tenant} = session}) do
     model = %{
       model
       | busy: "listing sources",
-        storage_id: storage_id,
-        tenant_id: tenant_id,
-        tenant: tenant,
+        session: session,
         mode: :schema,
         sources: nil,
         src_cursor: 0,
         schemas: %{},
         focus: :sources,
-        rows: nil,
-        plan: nil,
+        result: nil,
         qerror: nil
     }
 
@@ -787,41 +741,27 @@ defmodule Efsql.Tui.App do
     {%{put_schema(model, source, schema) | busy: nil}, []}
   end
 
-  defp done(model, :query, {:ok, {plan, rows, tenants, elapsed}}) do
-    columns = columns(plan, rows)
+  defp done(model, :query, {:ok, {%Efsql.Result{} = result, %Efsql.Session{} = session}}) do
+    %Efsql.Result{rows: rows, columns: columns} = result
     cells = render_cells(rows, columns)
 
     model = %{
       model
       | busy: nil,
-        rows: rows,
-        columns: columns,
+        result: result,
+        session: session,
         cells: cells,
         col_widths: col_widths(columns, cells),
         col_align: col_aligns(rows, columns),
-        plan: plan,
         qerror: nil,
-        elapsed_ms: elapsed,
         row_cursor: 0,
-        row_scroll: 0,
-        tenants: tenants
+        row_scroll: 0
     }
 
     {model, []}
   end
 
   defp done(model, _tag, _result), do: {%{model | busy: nil}, []}
-
-  defp columns(_plan, []), do: []
-
-  # In select-list order; `select *` has no list, so its fields are sorted
-  # with id first.
-  defp columns(%Efsql.Physical.Plan{columns: [_ | _] = columns}, _rows), do: columns
-
-  defp columns(_plan, rows) do
-    keys = rows |> Enum.flat_map(&Map.keys/1) |> Enum.uniq() |> Enum.sort()
-    if :id in keys, do: [:id | List.delete(keys, :id)], else: keys
-  end
 
   # Cells are rendered once here rather than per frame: a frame is painted on
   # every key press, and inspecting every visible value each time is what

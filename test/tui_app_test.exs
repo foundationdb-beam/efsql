@@ -52,7 +52,13 @@ defmodule Efsql.Tui.AppTest do
         {:key, :enter},
         {:done, :nav_entries, {:ok, ["demo", "staging"]}},
         {:key, :enter},
-        {:done, :activate, {:ok, {"Ecto.Adapters.FoundationDB", "demo", :fake_tenant}}},
+        {:done, :activate,
+         {:ok,
+          %Efsql.Session{
+            storage_id: "Ecto.Adapters.FoundationDB",
+            tenant_name: "demo",
+            tenant: :fake_tenant
+          }}},
         {:done, :sources, {:ok, ["orders", "users"]}}
       ])
 
@@ -144,7 +150,9 @@ defmodule Efsql.Tui.AppTest do
     assert model.input == ""
 
     plan = %Efsql.Physical.Plan{access: {:pk_range, nil, nil, nil, []}, ops: []}
-    {model, _} = feed(model, [{:done, :query, {:ok, {plan, [], %{}, 1}}}])
+
+    {model, _} =
+      feed(model, [{:done, :query, {:ok, {Efsql.Result.new(plan, [], 1), model.session}}}])
 
     {model, _} = feed(model, [{:key, :up}])
     assert model.input == "select id from users where name;"
@@ -155,7 +163,9 @@ defmodule Efsql.Tui.AppTest do
     rows = for i <- 1..3, do: %{id: "000#{i}", name: "User #{i}", notes: nil}
 
     plan = %Efsql.Physical.Plan{access: {:pk_range, nil, nil, nil, []}, ops: []}
-    {model, _} = feed(model, [{:done, :query, {:ok, {plan, rows, %{}, 7}}}])
+
+    {model, _} =
+      feed(model, [{:done, :query, {:ok, {Efsql.Result.new(plan, rows, 7), model.session}}}])
 
     text = frame_text(model)
     assert text =~ "(3 rows, 7 ms)"
@@ -184,8 +194,10 @@ defmodule Efsql.Tui.AppTest do
       columns: [:name, :"count(*)", :id]
     }
 
-    {model, _} = feed(model, [{:done, :query, {:ok, {plan, rows, %{}, 1}}}])
-    assert model.columns == [:name, :"count(*)", :id]
+    {model, _} =
+      feed(model, [{:done, :query, {:ok, {Efsql.Result.new(plan, rows, 1), model.session}}}])
+
+    assert model.result.columns == [:name, :"count(*)", :id]
     assert frame_text(model) =~ ~r/name\s+count\(\*\)\s+id/
 
     # the inspector lists fields in the same order
@@ -198,22 +210,25 @@ defmodule Efsql.Tui.AppTest do
     rows = [%{name: "Alice", id: "0001", age: 30}]
 
     plan = %Efsql.Physical.Plan{access: {:pk_range, nil, nil, nil, []}, ops: []}
-    {model, _} = feed(model, [{:done, :query, {:ok, {plan, rows, %{}, 1}}}])
-    assert model.columns == [:id, :age, :name]
+
+    {model, _} =
+      feed(model, [{:done, :query, {:ok, {Efsql.Result.new(plan, rows, 1), model.session}}}])
+
+    assert model.result.columns == [:id, :age, :name]
   end
 
   test "\\set tenant_batch sets and clears the tenants per transaction" do
     model = %{activated() | mode: :query}
 
     {model, _} = feed(model, chars("\\set tenant_batch 25") ++ [{:key, :enter}])
-    assert model.tenant_batch == 25
+    assert model.session.settings.tenant_batch == 25
     assert model.flash == {:info, "tenant_batch set to 25"}
 
     {model, _} = feed(model, chars("\\set tenant_batch off") ++ [{:key, :enter}])
-    assert model.tenant_batch == nil
+    assert model.session.settings.tenant_batch == nil
 
     {model, _} = feed(model, chars("\\set tenant_batch 0") ++ [{:key, :enter}])
-    assert model.tenant_batch == nil
+    assert model.session.settings.tenant_batch == nil
     assert {:error, "usage: " <> _} = model.flash
   end
 
@@ -223,11 +238,17 @@ defmodule Efsql.Tui.AppTest do
     batches = {:batches, [{:fan_out, []}, {:fan_out, []}], 4}
 
     plan = %Efsql.Physical.Plan{access: batches, ops: [], columns: [:name, :_tenant]}
-    {batched, _} = feed(model, [{:done, :query, {:ok, {plan, rows, %{}, 1}}}])
+
+    {batched, _} =
+      feed(model, [{:done, :query, {:ok, {Efsql.Result.new(plan, rows, 1), model.session}}}])
+
     assert frame_text(batched) =~ "(2 rows, 1 ms) · 2 transactions"
 
     plan = %Efsql.Physical.Plan{plan | access: {:fan_out, []}}
-    {single, _} = feed(model, [{:done, :query, {:ok, {plan, rows, %{}, 1}}}])
+
+    {single, _} =
+      feed(model, [{:done, :query, {:ok, {Efsql.Result.new(plan, rows, 1), model.session}}}])
+
     refute frame_text(single) =~ "transactions"
   end
 
@@ -237,7 +258,9 @@ defmodule Efsql.Tui.AppTest do
     rows = [%{id: uuid, item: "widget"}]
 
     plan = %Efsql.Physical.Plan{access: {:pk_range, nil, nil, nil, []}, ops: []}
-    {model, _} = feed(model, [{:done, :query, {:ok, {plan, rows, %{}, 1}}}])
+
+    {model, _} =
+      feed(model, [{:done, :query, {:ok, {Efsql.Result.new(plan, rows, 1), model.session}}}])
 
     text = frame_text(model)
     assert text =~ uuid
@@ -250,7 +273,10 @@ defmodule Efsql.Tui.AppTest do
     rows = [%{id: "0001", blob: long}]
 
     plan = %Efsql.Physical.Plan{access: {:pk_range, nil, nil, nil, []}, ops: []}
-    {model, _} = feed(model, [{:done, :query, {:ok, {plan, rows, %{}, 1}}}])
+
+    {model, _} =
+      feed(model, [{:done, :query, {:ok, {Efsql.Result.new(plan, rows, 1), model.session}}}])
+
     {model, _} = feed(model, [{:key, :tab}, {:key, :enter}])
     assert model.mode == :inspector
 
@@ -273,7 +299,10 @@ defmodule Efsql.Tui.AppTest do
       plan = %Efsql.Physical.Plan{access: {:pk_range, nil, nil, nil, []}, ops: []}
 
       {model, _} =
-        feed(model, [{:done, :query, {:ok, {plan, [%{id: "0001", blob: long}], %{}, 1}}}])
+        feed(model, [
+          {:done, :query,
+           {:ok, {Efsql.Result.new(plan, [%{id: "0001", blob: long}], 1), model.session}}}
+        ])
 
       {model, _} = feed(model, [{:key, :tab}, {:key, :enter}])
       model
@@ -383,7 +412,12 @@ defmodule Efsql.Tui.AppTest do
     test "a value that fits shows no scroll indicator" do
       model = %{activated() | mode: :query}
       plan = %Efsql.Physical.Plan{access: {:pk_range, nil, nil, nil, []}, ops: []}
-      {model, _} = feed(model, [{:done, :query, {:ok, {plan, [%{id: "0001"}], %{}, 1}}}])
+
+      {model, _} =
+        feed(model, [
+          {:done, :query, {:ok, {Efsql.Result.new(plan, [%{id: "0001"}], 1), model.session}}}
+        ])
+
       {model, _} = feed(model, [{:key, :tab}, {:key, :enter}])
 
       # the position indicator only appears when the value overflows

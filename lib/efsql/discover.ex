@@ -171,9 +171,7 @@ defmodule Efsql.Discover do
   end
 
   def indexes(tenant, source) do
-    EctoFoundationDB.Layer.Metadata.transactional(tenant, source, fn _tx, metadata ->
-      for idx <- metadata.indexes, do: %{name: idx[:id], fields: idx[:fields]}
-    end)
+    for idx <- Planner.indexes(tenant, source), do: %{name: idx[:id], fields: idx[:fields]}
   end
 
   # -- schema cache --

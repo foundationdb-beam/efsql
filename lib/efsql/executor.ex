@@ -17,19 +17,11 @@ defmodule Efsql.Executor do
 
   alias Efsql.Exception.Unsupported
   alias Efsql.Physical.Plan
+  alias Efsql.Predicate
   alias Efsql.Types
 
   # transaction_too_old (retryable) and transaction_timed_out
   @too_long [1007, 1031]
-
-  @cmp_ops ~w[== > >= < <=]a
-  @cmp_results %{
-    ==: [:eq],
-    >: [:gt],
-    >=: [:gt, :eq],
-    <: [:lt],
-    <=: [:lt, :eq]
-  }
 
   def run(%Plan{access: access, ops: ops}) do
     Enum.reduce(ops, fetch(access), &apply_op/2)
@@ -68,22 +60,7 @@ defmodule Efsql.Executor do
     end
   end
 
-  @doc "Whether `row` satisfies every one of `predicates`, with SQL NULL semantics."
-  def matches?(row, predicates), do: Enum.all?(predicates, &eval(&1, row))
-
   # -- access nodes --
-
-  defp fetch({:pk_range, query, id_start, id_end, options}) do
-    Efsql.Repo.all_range(query, id_start, id_end, options)
-  end
-
-  defp fetch({:index_scan, query, options}) do
-    Efsql.Repo.all(query, options)
-  end
-
-  defp fetch({:all_from_source, query, options}) do
-    Efsql.Repo.all_from_source(query, options)
-  end
 
   # One transaction per batch, up to `concurrency` at a time.
   defp fetch({:batches, batches, concurrency}),
@@ -96,12 +73,9 @@ defmodule Efsql.Executor do
     Ecto.Adapters.FoundationDB.transactional(db, fn -> read_tenants(tenant_plans) end)
   end
 
-  defp fetch({:union, nodes}) do
-    nodes
-    |> Enum.map(&async_fetch/1)
-    |> Efsql.Repo.await()
-    |> List.flatten()
-  end
+  # Every other node, a union included, is one or more adapter reads:
+  # start them all, then await them together, so they are pipelined.
+  defp fetch(access), do: access |> start() |> Efsql.Repo.await() |> List.flatten()
 
   # Runs inside the transaction. A read too big for one transaction fails
   # with transaction_too_old, which erlfdb's transactional loop would retry,
@@ -160,17 +134,14 @@ defmodule Efsql.Executor do
 
   # -- operators --
 
-  defp apply_op({:filter, predicates}, rows) do
-    Enum.filter(rows, fn row -> Enum.all?(predicates, &eval(&1, row)) end)
-  end
+  defp apply_op({:filter, predicates}, rows),
+    do: Enum.filter(rows, &Predicate.matches?(&1, predicates))
 
   defp apply_op({:aggregate, group_by, aggregates}, rows) do
     Efsql.Aggregate.run(rows, group_by, aggregates)
   end
 
-  defp apply_op({:sort, sort}, rows) do
-    Enum.sort(rows, fn a, b -> compare(a, b, sort) != :gt end)
-  end
+  defp apply_op({:sort, order}, rows), do: sort(rows, order)
 
   defp apply_op({:limit, n}, rows) do
     Enum.take(rows, n)
@@ -180,54 +151,13 @@ defmodule Efsql.Executor do
     Enum.map(rows, &Map.take(&1, fields))
   end
 
-  # -- predicate evaluation --
-
-  defp eval({:cmp, op, field, param}, row) when op in @cmp_ops do
-    case Map.get(row, field) do
-      nil -> false
-      value -> Types.compare(value, param) in Map.fetch!(@cmp_results, op)
-    end
-  end
-
-  defp eval({:range, field, {lower_op, lower}, {upper_op, upper}}, row) do
-    eval({:cmp, lower_op, field, lower}, row) and eval({:cmp, upper_op, field, upper}, row)
-  end
-
-  defp eval({:in, field, values}, row) do
-    case Map.get(row, field) do
-      nil -> false
-      value -> Enum.any?(values, &(Types.compare(value, &1) == :eq))
-    end
-  end
-
-  defp eval({:is_null, field}, row), do: Map.get(row, field) == nil
-  defp eval({:not_null, field}, row), do: Map.get(row, field) != nil
-
-  defp eval({:like, field, pattern}, row) do
-    case Map.get(row, field) do
-      nil -> false
-      value -> Regex.match?(like_regex(pattern), value)
-    end
-  end
-
-  defp eval({:not_like, field, pattern}, row) do
-    case Map.get(row, field) do
-      nil -> false
-      value -> not Regex.match?(like_regex(pattern), value)
-    end
-  end
-
-  defp like_regex(pattern) do
-    source =
-      pattern
-      |> Regex.escape()
-      |> String.replace("%", ".*")
-      |> String.replace("_", ".")
-
-    Regex.compile!("\\A" <> source <> "\\z", "s")
-  end
-
   # -- sorting --
+
+  @doc """
+  Sorts rows by `[{:asc | :desc, field}]`: NULLs last ascending and first
+  descending, as PostgreSQL does, and values by `Efsql.Types.compare/2`.
+  """
+  def sort(rows, order), do: Enum.sort(rows, fn a, b -> compare(a, b, order) != :gt end)
 
   defp compare(_a, _b, []), do: :eq
 

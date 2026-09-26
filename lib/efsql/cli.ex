@@ -1,5 +1,5 @@
 defmodule Efsql.Cli do
-  defstruct args: [], history: [], debug: false, tenants: %{}, limit: 15, tenant_batch: nil
+  defstruct args: [], history: [], debug: false, session: %Efsql.Session{}
 
   use GenServer
 
@@ -92,9 +92,7 @@ defmodule Efsql.Cli do
         """
         Meta-commands:
           \\tenants [storage_id]  list tenants (optionally for a specific storage id)
-          \\set limit N           set the default row limit (currently #{state.limit})
-          \\set tenant_batch N|off  read *.table queries N tenants per transaction
-                                 (currently #{state.tenant_batch || "off"})
+        #{settings_help(state.session.settings)}
           \\?                     show this help
         """,
         :light_black
@@ -140,57 +138,41 @@ defmodule Efsql.Cli do
     state
   end
 
-  defp handle_input("\\set limit " <> rest, state = %__MODULE__{}) do
-    case Integer.parse(String.trim(rest)) do
-      {n, ""} when n > 0 ->
-        Owl.IO.puts(Owl.Data.tag("limit set to #{n}", :light_black))
-        %__MODULE__{state | limit: n}
+  defp handle_input("\\set " <> rest, state = %__MODULE__{}) do
+    case Efsql.Settings.set(state.session.settings, rest) do
+      {:ok, settings, message} ->
+        Owl.IO.puts(Owl.Data.tag(message, :light_black))
+        %__MODULE__{state | session: %{state.session | settings: settings}}
 
-      _ ->
-        print_error("Usage: \\set limit <positive integer>")
-        state
-    end
-  end
-
-  defp handle_input("\\set tenant_batch " <> rest, state = %__MODULE__{}) do
-    case {String.trim(rest), Integer.parse(String.trim(rest))} do
-      {"off", _} ->
-        Owl.IO.puts(Owl.Data.tag("tenant_batch off: one transaction", :light_black))
-        %__MODULE__{state | tenant_batch: nil}
-
-      {_, {n, ""}} when n > 0 ->
-        Owl.IO.puts(Owl.Data.tag("tenant_batch set to #{n}", :light_black))
-        %__MODULE__{state | tenant_batch: n}
-
-      _ ->
-        print_error("Usage: \\set tenant_batch <positive integer> | off")
+      {:error, usage} ->
+        print_error(usage)
         state
     end
   end
 
   defp handle_input(data, state = %__MODULE__{}) do
-    limit_sql = "limit #{state.limit + 1}"
+    limit = state.session.settings.limit
+    limit_sql = "limit #{limit + 1}"
 
-    {tenants} =
+    session =
       try do
         {sql, display_limit} =
           if String.match?(data, ~r/\blimit\b/i),
             do: {data, :all},
-            else: {String.replace(data, ~r/;\s*$/, " #{limit_sql};"), state.limit}
+            else: {String.replace(data, ~r/;\s*$/, " #{limit_sql};"), limit}
 
-        options = if state.tenant_batch, do: [tenant_batch: state.tenant_batch], else: []
-        {call, rows, tenants} = Efsql.qall(sql, options, state.tenants)
-        if state.debug, do: print_debug(call)
-        print_table(rows, display_limit, call.columns)
-        print_snapshots(Efsql.Fanout.transactions(call))
-        {tenants}
+        {result, session} = Efsql.Session.run(state.session, sql)
+        if state.debug, do: print_debug(result.plan)
+        print_table(result.rows, display_limit, result.columns)
+        print_transactions(result.transactions)
+        session
       rescue
         e ->
           print_error(e)
-          {state.tenants}
+          state.session
       end
 
-    %__MODULE__{state | history: [data | state.history], tenants: tenants}
+    %__MODULE__{state | history: [data | state.history], session: session}
   end
 
   def init_ecto_foundationdb!(args) do
@@ -258,12 +240,10 @@ defmodule Efsql.Cli do
     print_rows(display_rows, more?, columns)
   end
 
-  # Columns in select-list order; `select *` (no columns) sorts them.
   defp print_rows(rows, more?, columns) do
     rows
     |> Enum.map(fn row ->
-      row = if columns, do: Map.new(columns, &{&1, Map.get(row, &1)}), else: row
-      Map.new(row, fn {k, v} -> {to_string(k), format_value(v)} end)
+      Map.new(columns, &{to_string(&1), format_value(Map.get(row, &1))})
     end)
     |> Owl.Table.new(
       border_style: :solid_rounded,
@@ -277,14 +257,19 @@ defmodule Efsql.Cli do
     Owl.IO.puts(Owl.Data.tag(label, :light_black))
   end
 
-  defp print_snapshots(1), do: :ok
+  defp settings_help(settings) do
+    Enum.map_join(Efsql.Settings.describe(settings), "\n", fn {command, what} ->
+      "  " <> String.pad_trailing(command, 22) <> " " <> what
+    end)
+  end
 
-  defp print_snapshots(n) do
+  defp print_transactions(1), do: :ok
+
+  defp print_transactions(n) do
     Owl.IO.puts(Owl.Data.tag("(read in #{n} transactions)", :yellow))
   end
 
-  defp column_sorter(nil), do: :asc
-
+  # Owl sorts a table's columns; keep them in the result's order.
   defp column_sorter(columns) do
     position = columns |> Enum.map(&to_string/1) |> Enum.with_index() |> Map.new()
     &(Map.fetch!(position, &1) <= Map.fetch!(position, &2))

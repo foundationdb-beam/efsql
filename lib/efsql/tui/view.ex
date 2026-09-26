@@ -57,9 +57,9 @@ defmodule Efsql.Tui.View do
 
   defp title_bar(model, _cols) do
     session =
-      case model.tenant_id do
+      case model.session.tenant_name do
         nil -> "no tenant"
-        tenant_id -> "#{model.storage_id} / #{tenant_id}"
+        tenant_name -> "#{model.session.storage_id} / #{tenant_name}"
       end
 
     [
@@ -263,22 +263,18 @@ defmodule Efsql.Tui.View do
           []
       end
 
+    show_plan? = model.show_plan?
+
     plan_lines =
-      if model.show_plan? and model.plan do
-        [
+      case model.result do
+        %Efsql.Result{plan: plan} when show_plan? ->
           [
-            {:dim,
-             Render.truncate(" plan: " <> inspect(model.plan.access, width: :infinity), cols)}
+            [{:dim, Render.truncate(" plan: " <> inspect(plan.access, width: :infinity), cols)}],
+            [{:dim, Render.truncate(" ops:  " <> inspect(plan.ops, width: :infinity), cols)}]
           ]
-        ] ++
-          [
-            [
-              {:dim,
-               Render.truncate(" ops:  " <> inspect(model.plan.ops, width: :infinity), cols)}
-            ]
-          ]
-      else
-        []
+
+        _ ->
+          []
       end
 
     used = 1 + length(completion) + length(plan_lines)
@@ -287,19 +283,19 @@ defmodule Efsql.Tui.View do
     {[input_line] ++ completion ++ plan_lines ++ [[]] ++ results, cursor}
   end
 
-  defp results_lines(%Model{rows: nil}, _height, _cols) do
+  defp results_lines(%Model{result: nil}, _height, _cols) do
     [[{:dim, " no results yet — run a statement, or Esc for the schema browser"}]]
   end
 
-  defp results_lines(%Model{rows: []} = model, _height, _cols) do
-    [[{:dim, " (0 rows, #{model.elapsed_ms} ms)" <> snapshots_note(model)}]]
+  defp results_lines(%Model{result: %Efsql.Result{rows: []} = result}, _height, _cols) do
+    [[{:dim, " (0 rows, #{result.elapsed_ms} ms)" <> transactions_note(result)}]]
   end
 
-  defp results_lines(model, height, cols) do
+  defp results_lines(%Model{result: result} = model, height, cols) do
     {widths, column_map} = Columns.layout(model.col_widths, cols)
     aligns = Enum.map(column_map, &align_of(model, &1))
     visible = max(height - 2, 1)
-    count = length(model.rows)
+    count = length(result.rows)
     start = if model.row_cursor >= visible, do: model.row_cursor - visible + 1, else: 0
 
     names = Enum.map(column_map, &header_of(model, &1))
@@ -317,25 +313,20 @@ defmodule Efsql.Tui.View do
     footer =
       [
         {:dim,
-         " (#{count} rows, #{model.elapsed_ms} ms)" <>
-           snapshots_note(model) <> hidden_note(model, column_map) <> browse_hint(model, count)}
+         " (#{count} rows, #{result.elapsed_ms} ms)" <>
+           transactions_note(result) <>
+           hidden_note(result, column_map) <> browse_hint(model, count)}
       ]
 
     [header] ++ rows ++ [footer]
   end
 
   # A query across tenants read in batches says how many transactions it took.
-  defp snapshots_note(%Model{plan: %Efsql.Physical.Plan{} = plan}) do
-    case Efsql.Fanout.transactions(plan) do
-      1 -> ""
-      n -> " · #{n} transactions"
-    end
-  end
-
-  defp snapshots_note(_model), do: ""
+  defp transactions_note(%Efsql.Result{transactions: 1}), do: ""
+  defp transactions_note(%Efsql.Result{transactions: n}), do: " · #{n} transactions"
 
   defp header_of(_model, :split), do: "…"
-  defp header_of(model, {:col, ix}), do: model.columns |> Enum.at(ix) |> to_string()
+  defp header_of(model, {:col, ix}), do: model.result.columns |> Enum.at(ix) |> to_string()
 
   defp align_of(_model, :split), do: :left
   defp align_of(model, {:col, ix}), do: Enum.at(model.col_align, ix, :left)
@@ -351,8 +342,8 @@ defmodule Efsql.Tui.View do
 
   # Dropped columns are reported the way DuckDB reports them: a bare `…`
   # column otherwise reads as truncated data rather than a layout decision.
-  defp hidden_note(model, column_map) do
-    total = length(model.columns)
+  defp hidden_note(result, column_map) do
+    total = length(result.columns)
     shown = Enum.count(column_map, &match?({:col, _}, &1))
 
     if shown < total, do: " — #{total} columns (#{shown} shown)", else: ""
