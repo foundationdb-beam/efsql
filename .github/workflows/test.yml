@@ -1,0 +1,51 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  # Keep in step with release.yml.
+  ELIXIR_VERSION: "1.19"
+  OTP_VERSION: "28"
+  FDB_VERSION: "7.3.69"
+  ERLFDB_COMPILE_API_VERSION: "730"
+  MIX_ENV: test
+
+jobs:
+  test:
+    name: mix test
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ env.OTP_VERSION }}
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+
+      # The client links the erlfdb NIF; the server package provides the
+      # fdbserver binary that EctoFoundationDB.Sandbox runs the tests against.
+      - name: Install FoundationDB
+        run: |
+          BASE="https://github.com/apple/foundationdb/releases/download/${FDB_VERSION}"
+          curl -fsSL -o fdb-clients.deb "$BASE/foundationdb-clients_${FDB_VERSION}-1_amd64.deb"
+          curl -fsSL -o fdb-server.deb "$BASE/foundationdb-server_${FDB_VERSION}-1_amd64.deb"
+          sudo dpkg -i fdb-clients.deb fdb-server.deb
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: test-${{ runner.os }}-otp${{ env.OTP_VERSION }}-elixir${{ env.ELIXIR_VERSION }}-fdb${{ env.FDB_VERSION }}-mix-${{ hashFiles('mix.lock') }}
+          restore-keys: test-${{ runner.os }}-otp${{ env.OTP_VERSION }}-elixir${{ env.ELIXIR_VERSION }}-fdb${{ env.FDB_VERSION }}-mix-
+
+      - run: mix deps.get --only test
+      - run: mix deps.compile
+      - run: mix compile
+      - run: mix test
