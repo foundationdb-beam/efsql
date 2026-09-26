@@ -162,7 +162,7 @@ defmodule Efsql.Cli do
 
         {call, rows, tenants} = Efsql.qall(sql, [], state.tenants)
         if state.debug, do: print_debug(call)
-        print_table(rows, display_limit)
+        print_table(rows, display_limit, call.columns)
         {tenants}
       rescue
         e ->
@@ -221,34 +221,47 @@ defmodule Efsql.Cli do
     end
   end
 
-  defp print_table([], _limit) do
+  defp print_table([], _limit, _columns) do
     Owl.IO.puts(Owl.Data.tag("(0 rows)", :light_black))
   end
 
-  defp print_table(rows, :all) do
-    print_rows(rows, false)
+  defp print_table(rows, :all, columns) do
+    print_rows(rows, false, columns)
   end
 
-  defp print_table(rows, limit) do
+  defp print_table(rows, limit, columns) do
     {display_rows, more?} =
       if length(rows) > limit,
         do: {Enum.take(rows, limit), true},
         else: {rows, false}
 
-    print_rows(display_rows, more?)
+    print_rows(display_rows, more?, columns)
   end
 
-  defp print_rows(rows, more?) do
+  # Columns in select-list order; `select *` (no columns) sorts them.
+  defp print_rows(rows, more?, columns) do
     rows
     |> Enum.map(fn row ->
+      row = if columns, do: Map.new(columns, &{&1, Map.get(row, &1)}), else: row
       Map.new(row, fn {k, v} -> {to_string(k), format_value(v)} end)
     end)
-    |> Owl.Table.new(border_style: :solid_rounded, padding_x: 1)
+    |> Owl.Table.new(
+      border_style: :solid_rounded,
+      padding_x: 1,
+      sort_columns: column_sorter(columns)
+    )
     |> Owl.IO.puts()
 
     n = length(rows)
     label = if more?, do: "(#{n} rows, more available — add LIMIT)", else: "(#{n} rows)"
     Owl.IO.puts(Owl.Data.tag(label, :light_black))
+  end
+
+  defp column_sorter(nil), do: :asc
+
+  defp column_sorter(columns) do
+    position = columns |> Enum.map(&to_string/1) |> Enum.with_index() |> Map.new()
+    &(Map.fetch!(position, &1) <= Map.fetch!(position, &2))
   end
 
   defp format_value(nil), do: Owl.Data.tag("null", :light_black)

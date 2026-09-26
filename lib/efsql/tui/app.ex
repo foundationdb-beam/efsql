@@ -691,9 +691,19 @@ defmodule Efsql.Tui.App do
 
   defp ivalue_key(%Model{ifield_cursor: ix, size: {_rows, cols}}), do: {ix, cols}
 
+  @doc """
+  The inspected row's fields: in select-list order when the query has one,
+  else sorted.
+  """
+  def inspector_fields(%Model{irow: row, plan: %Efsql.Physical.Plan{columns: [_ | _] = columns}}) do
+    listed = Enum.filter(columns, &Map.has_key?(row, &1))
+    listed ++ Enum.sort(Map.keys(row) -- listed)
+  end
+
+  def inspector_fields(%Model{irow: row}), do: row |> Map.keys() |> Enum.sort()
+
   defp ivalue_lines(%Model{irow: row, size: {_rows, cols}} = model) do
-    fields = row |> Map.keys() |> Enum.sort()
-    selected = Enum.at(fields, model.ifield_cursor)
+    selected = Enum.at(inspector_fields(model), model.ifield_cursor)
 
     row
     |> Map.get(selected)
@@ -751,7 +761,7 @@ defmodule Efsql.Tui.App do
   end
 
   defp done(model, :query, {:ok, {plan, rows, tenants, elapsed}}) do
-    columns = columns(rows)
+    columns = columns(plan, rows)
     cells = render_cells(rows, columns)
 
     model = %{
@@ -775,9 +785,13 @@ defmodule Efsql.Tui.App do
 
   defp done(model, _tag, _result), do: {%{model | busy: nil}, []}
 
-  defp columns([]), do: []
+  defp columns(_plan, []), do: []
 
-  defp columns(rows) do
+  # In select-list order; `select *` has no list, so its fields are sorted
+  # with id first.
+  defp columns(%Efsql.Physical.Plan{columns: [_ | _] = columns}, _rows), do: columns
+
+  defp columns(_plan, rows) do
     keys = rows |> Enum.flat_map(&Map.keys/1) |> Enum.uniq() |> Enum.sort()
     if :id in keys, do: [:id | List.delete(keys, :id)], else: keys
   end

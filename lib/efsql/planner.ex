@@ -61,10 +61,16 @@ defmodule Efsql.Planner do
         {:project, logical.projection}
       )
 
-    %Plan{plan | ops: plan.ops ++ ops}
+    %Plan{plan | ops: plan.ops ++ ops, columns: columns(logical.projection)}
   end
 
-  def plan(%Logical.Select{} = logical, options) do
+  def plan(%Logical.Select{} = logical, options),
+    do: %Plan{plan_rows(logical, options) | columns: columns(logical.projection)}
+
+  defp columns(:star), do: nil
+  defp columns(fields), do: Enum.uniq(fields)
+
+  defp plan_rows(%Logical.Select{} = logical, options) do
     %Logical.Select{predicates: preds, order: sort, projection: projection} = logical
     star? = projection == :star
     {pks, ins, pushables, residuals} = classify(preds)

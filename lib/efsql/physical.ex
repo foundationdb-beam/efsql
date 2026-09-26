@@ -23,9 +23,13 @@ defmodule Efsql.Physical do
     * `{:sort, [{:asc | :desc, field}]}` — NULLs last ascending, first descending
     * `{:limit, n}`
     * `{:project, [field]}` — trim rows to the requested fields
+
+  A plan also carries `columns`, the result columns in select-list order,
+  so a result table can show them as written; nil for `select *`, whose
+  fields are whatever the rows hold.
   """
 
   defmodule Plan do
-    defstruct access: nil, ops: []
+    defstruct access: nil, ops: [], columns: nil
   end
 end

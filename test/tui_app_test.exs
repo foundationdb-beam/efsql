@@ -174,6 +174,34 @@ defmodule Efsql.Tui.AppTest do
     assert model.mode == :query
   end
 
+  test "result columns follow the select list" do
+    model = %{activated() | mode: :query}
+    rows = [%{id: "0001", name: "Alice", "count(*)": 3}]
+
+    plan = %Efsql.Physical.Plan{
+      access: {:pk_range, nil, nil, nil, []},
+      ops: [],
+      columns: [:name, :"count(*)", :id]
+    }
+
+    {model, _} = feed(model, [{:done, :query, {:ok, {plan, rows, %{}, 1}}}])
+    assert model.columns == [:name, :"count(*)", :id]
+    assert frame_text(model) =~ ~r/name\s+count\(\*\)\s+id/
+
+    # the inspector lists fields in the same order
+    {model, _} = feed(model, [{:key, :tab}, {:key, :enter}])
+    assert App.inspector_fields(model) == [:name, :"count(*)", :id]
+  end
+
+  test "select * has no select list, so id comes first and the rest sort" do
+    model = %{activated() | mode: :query}
+    rows = [%{name: "Alice", id: "0001", age: 30}]
+
+    plan = %Efsql.Physical.Plan{access: {:pk_range, nil, nil, nil, []}, ops: []}
+    {model, _} = feed(model, [{:done, :query, {:ok, {plan, rows, %{}, 1}}}])
+    assert model.columns == [:id, :age, :name]
+  end
+
   test "uuid primary keys are not truncated in results" do
     model = %{activated() | mode: :query}
     uuid = "00ab2aa8-2bba-4102-bf8c-ced5d3142f8a"
