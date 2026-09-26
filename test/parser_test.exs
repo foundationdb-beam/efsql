@@ -5,11 +5,7 @@ defmodule Efsql.ParserTest do
   alias Efsql.Logical
   alias Efsql.Parser
 
-  defp parse(sql) do
-    {:ok, context, tokens} = SQL.Lexer.lex(sql)
-    {:ok, _context, parsed} = SQL.Parser.parse(tokens, context)
-    Parser.to_logical(parsed)
-  end
+  defp parse(sql), do: Parser.sql_to_logical(sql)
 
   describe "select" do
     test "single field" do
@@ -236,6 +232,52 @@ defmodule Efsql.ParserTest do
     test "like on an atom raises" do
       assert_raise Unsupported, fn ->
         parse("select id from t.users where status like 'a%'::atom;")
+      end
+    end
+
+    test "is null and is not null" do
+      assert %Logical.Select{predicates: [{:is_null, :notes}]} =
+               parse("select id from t.users where notes is null;")
+
+      assert %Logical.Select{predicates: [{:not_null, :notes}]} =
+               parse("select id from t.users where notes is not null;")
+
+      assert %Logical.Select{predicates: [{:is_null, :notes}]} =
+               parse("select id from t.users where notes isnull;")
+
+      assert %Logical.Select{predicates: [{:not_null, :notes}]} =
+               parse("select id from t.users where notes notnull;")
+    end
+
+    # The SQL library hangs on these without Efsql.Parser's token rewrite.
+    test "null tests combine with other predicates in any position" do
+      assert %Logical.Select{predicates: [{:cmp, :==, :name, "a"}, {:not_null, :notes}]} =
+               parse("select id from t.users where name = 'a' and notes is not null;")
+
+      assert %Logical.Select{predicates: [{:not_null, :notes}, {:cmp, :==, :name, "a"}]} =
+               parse("select id from t.users where notes is not null and name = 'a';")
+
+      assert %Logical.Select{
+               predicates: [{:is_null, :a}, {:not_null, :b}, {:cmp, :==, :c, "x"}]
+             } = parse("select id from t.users where a is null and b notnull and c = 'x';")
+
+      assert %Logical.Select{predicates: [{:cmp, :==, :c, "x"}, {:is_null, :a}]} =
+               parse("select id from t.users where c = 'x' and a isnull;")
+    end
+
+    test "comparison with null raises" do
+      assert_raise Unsupported, ~r/use IS NULL or IS NOT NULL/, fn ->
+        parse("select id from t.users where notes = null;")
+      end
+
+      assert_raise Unsupported, ~r/use IS NULL or IS NOT NULL/, fn ->
+        parse("select id from t.users where notes in ('a', null);")
+      end
+    end
+
+    test "the primary key is never null" do
+      assert_raise Unsupported, ~r/never NULL/, fn ->
+        parse("select id from t.users where _ is null;")
       end
     end
 

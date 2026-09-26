@@ -14,10 +14,7 @@ defmodule Efsql do
 
   import Ecto.Query
 
-  def lex_and_parse(sql) do
-    {:ok, context, tokens} = SQL.Lexer.lex(sql)
-    SQL.Parser.parse(tokens, context)
-  end
+  def lex_and_parse(sql), do: Efsql.Parser.parse(sql)
 
   def hello() do
     tenant = EctoFoundationDB.Tenant.open!(Efsql.Repo, "localhost")
@@ -48,9 +45,7 @@ defmodule Efsql do
   end
 
   def sql_to_logical(sql, tenants \\ %{}) do
-    {:ok, context, tokens} = SQL.Lexer.lex(sql)
-    {:ok, _context, parsed} = SQL.Parser.parse(tokens, context)
-    logical = %Efsql.Logical.Select{} = Efsql.Parser.to_logical(parsed)
+    logical = %Efsql.Logical.Select{} = Efsql.Parser.sql_to_logical(sql)
     resolve_tenant(logical, tenants)
   end
 

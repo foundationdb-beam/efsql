@@ -11,6 +11,45 @@ defmodule Efsql.Parser do
 
   @comparison_ops ~w[= >= <= > <]a
 
+  @doc """
+  Lexes and parses SQL text into the SQL library's parse tree, as
+  `{:ok, context, parsed}`. Use this rather than calling the library
+  directly: it first rewrites token sequences the library mishandles.
+  """
+  def parse(sql) do
+    {:ok, context, tokens} = SQL.Lexer.lex(sql)
+    SQL.Parser.parse(normalize_tokens(tokens), context)
+  end
+
+  def sql_to_logical(sql) do
+    {:ok, _context, parsed} = parse(sql)
+    to_logical(parsed)
+  end
+
+  # The library assembles `x is null` into a node that composes with `and`,
+  # but leaves `x is not null` as loose tokens, and never returns from
+  # `... and x is not null`; its postfix `isnull`/`notnull` nodes hang the
+  # same way. Rewrite all of them to the `is null` shape, marking the
+  # negated ones on the `is` token's meta. The marker is appended because
+  # the library matches the leading meta entries by position. Lexer tokens
+  # are in reverse order.
+  defp normalize_tokens([{:null, _, []} = null, {:not, _, []}, {:is, meta, []} | rest]) do
+    [null, {:is, meta ++ [efsql_not_null: true], []} | normalize_tokens(rest)]
+  end
+
+  defp normalize_tokens([{tag, meta, []} | rest]) when tag in ~w[isnull notnull]a do
+    is_meta = List.keyreplace(meta, :type, 0, {:type, :operator})
+    is_meta = if tag == :notnull, do: is_meta ++ [efsql_not_null: true], else: is_meta
+    [{:null, meta, []}, {:is, is_meta, []} | normalize_tokens(rest)]
+  end
+
+  defp normalize_tokens([{tag, meta, data} | rest]) when tag in ~w[paren bracket brace]a do
+    [{tag, meta, normalize_tokens(data)} | normalize_tokens(rest)]
+  end
+
+  defp normalize_tokens([token | rest]), do: [token | normalize_tokens(rest)]
+  defp normalize_tokens([]), do: []
+
   def to_logical(parsed) do
     parsed
     |> Enum.reject(fn
@@ -131,6 +170,13 @@ defmodule Efsql.Parser do
     {:in, field_atom(field), values}
   end
 
+  defp conjunct({:is, meta, [field, {:null, _null_meta, []}]}) do
+    case field_atom(field) do
+      :_ -> raise Unsupported, "the primary key '_' is never NULL"
+      field -> if meta[:efsql_not_null], do: {:not_null, field}, else: {:is_null, field}
+    end
+  end
+
   defp conjunct({token, _meta, args}) do
     raise Unsupported, "'#{token}'/#{length(args)} is not supported in the where clause."
   end
@@ -163,7 +209,10 @@ defmodule Efsql.Parser do
 
   defp param({true, _meta, []}), do: true
   defp param({false, _meta, []}), do: false
-  defp param({nil, _meta, []}), do: nil
+  # SQL's `x = null` is never true, which is never what was meant.
+  defp param({:null, _meta, []}) do
+    raise Unsupported, "a comparison with NULL is never true; use IS NULL or IS NOT NULL"
+  end
 
   defp param({:paren, _meta, [{:quote, _, part}, {:comma, _, [{:*, _, []}]}]}) do
     {:erlang.list_to_binary(part), :*}

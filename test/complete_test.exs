@@ -43,6 +43,20 @@ defmodule Efsql.CompleteTest do
     assert "between" in candidates
   end
 
+  test "is offers null and not null" do
+    {_, candidates} = Complete.complete("select id from users where name ", @context)
+    assert "is" in candidates
+
+    assert {_, ["null", "not"]} =
+             Complete.complete("select id from users where name is ", @context)
+
+    assert {_, ["null"]} =
+             Complete.complete("select id from users where name is not ", @context)
+
+    {_, candidates} = Complete.complete("select id from users where name is null ", @context)
+    assert "and" in candidates
+  end
+
   test "order by offers fields" do
     assert {_, ["by"]} = Complete.complete("select id from users order ", @context)
     {_, candidates} = Complete.complete("select id from users order by ", @context)

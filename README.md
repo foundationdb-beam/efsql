@@ -223,6 +223,18 @@ select col_a, col_b from tenant_id.table_name where index_col between 'baz' and 
 
 Since efsql doesn't have access to the Ecto schema, type checking is loosened: a value must be written as the type the column stores. For datetime columns, use a [typed literal](#typed-literals).
 
+### Filter by NULL
+
+```sql
+select col_a from tenant_id.table_name where col_b is null;
+select col_a from tenant_id.table_name where col_b is not null;
+```
+
+A field that is `nil` or absent from the stored record is NULL. The
+PostgreSQL shorthands `col_b isnull` and `col_b notnull` also work. As in SQL,
+`col_b = null` would never be true, so efsql rejects it with a pointer to
+`IS NULL`.
+
 ### Typed literals
 
 A quoted literal is always a string. To compare against an Elixir term that

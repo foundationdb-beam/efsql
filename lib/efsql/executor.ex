@@ -4,7 +4,7 @@ defmodule Efsql.Executor do
   then folds the operator pipeline over them.
 
   SQL NULL semantics: a comparison, LIKE, or IN against a NULL (nil) field is
-  false — including NOT LIKE. Sorting places NULLs last ascending and first
+  false — including NOT LIKE. IS NULL matches a nil or absent field. Sorting places NULLs last ascending and first
   descending, matching PostgreSQL's defaults. Values compare with
   `Efsql.Types.compare/2`, so datetimes order chronologically.
   """
@@ -95,6 +95,9 @@ defmodule Efsql.Executor do
       value -> Enum.any?(values, &(Types.compare(value, &1) == :eq))
     end
   end
+
+  defp eval({:is_null, field}, row), do: Map.get(row, field) == nil
+  defp eval({:not_null, field}, row), do: Map.get(row, field) != nil
 
   defp eval({:like, field, pattern}, row) do
     case Map.get(row, field) do

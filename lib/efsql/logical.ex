@@ -10,6 +10,7 @@ defmodule Efsql.Logical do
       bound, `lower_op` in `:> :>=`, `upper_op` in `:< :<=`
     * `{:like, field, pattern}` / `{:not_like, field, pattern}`
     * `{:in, field, values}`
+    * `{:is_null, field}` / `{:not_null, field}`
 
   The primary key is the pseudo-field `:_`.
 
@@ -36,4 +37,6 @@ defmodule Efsql.Logical do
   def predicate_field({:like, field, _pattern}), do: field
   def predicate_field({:not_like, field, _pattern}), do: field
   def predicate_field({:in, field, _values}), do: field
+  def predicate_field({:is_null, field}), do: field
+  def predicate_field({:not_null, field}), do: field
 end

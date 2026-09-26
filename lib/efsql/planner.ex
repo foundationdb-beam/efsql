@@ -202,6 +202,8 @@ defmodule Efsql.Planner do
   defp kind({:in, _field, _values}), do: :in
   defp kind({:like, _field, _pattern}), do: :residual
   defp kind({:not_like, _field, _pattern}), do: :residual
+  defp kind({:is_null, _field}), do: :residual
+  defp kind({:not_null, _field}), do: :residual
   defp kind({:cmp, _op, @pk_field, _value}), do: :pk
   defp kind({:range, @pk_field, _lower, _upper}), do: :pk
   defp kind({:cmp, _op, _field, _value}), do: :pushable
