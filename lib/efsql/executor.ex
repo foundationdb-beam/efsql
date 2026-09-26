@@ -19,7 +19,7 @@ defmodule Efsql.Executor do
   alias Efsql.Physical.Plan
   alias Efsql.Types
 
-  # transaction_too_old and transaction_timed_out
+  # transaction_too_old (retryable) and transaction_timed_out
   @too_long [1007, 1031]
 
   @cmp_ops ~w[== > >= < <=]a
@@ -56,32 +56,41 @@ defmodule Efsql.Executor do
 
   defp fetch({:fan_out, tenant_plans}) do
     db = Ecto.Adapters.FoundationDB.db(Efsql.Repo)
+    Ecto.Adapters.FoundationDB.transactional(db, fn -> read_tenants(tenant_plans) end)
+  end
 
-    Ecto.Adapters.FoundationDB.transactional(db, fn tx ->
-      # transaction_too_old is retryable, but a read too big for one
-      # transaction would only fail the same way again.
-      :erlfdb.set_option(tx, :retry_limit, 2)
+  defp fetch({:union, nodes}) do
+    nodes
+    |> Enum.map(&async_fetch/1)
+    |> Efsql.Repo.await()
+    |> List.flatten()
+  end
 
-      started =
-        for {name, %Plan{access: access} = plan} <- tenant_plans,
-            do: {name, plan, start(access)}
+  # Runs inside the transaction. A read too big for one transaction fails
+  # with transaction_too_old, which erlfdb's transactional loop would retry,
+  # forever and each time as slowly. So that error is turned into one the
+  # loop doesn't catch (it only retries erlfdb errors) and the query fails
+  # at once; any other error still retries as usual.
+  defp read_tenants(tenant_plans) do
+    started =
+      for {name, %Plan{access: access} = plan} <- tenant_plans,
+          do: {name, plan, start(access)}
 
-      results = started |> Enum.flat_map(&elem(&1, 2)) |> Efsql.Repo.await()
+    results = started |> Enum.flat_map(&elem(&1, 2)) |> Efsql.Repo.await()
 
-      {rows, []} =
-        Enum.flat_map_reduce(started, results, fn {name, plan, futures}, results ->
-          {mine, rest} = Enum.split(results, length(futures))
+    {rows, []} =
+      Enum.flat_map_reduce(started, results, fn {name, plan, futures}, results ->
+        {mine, rest} = Enum.split(results, length(futures))
 
-          rows =
-            plan.ops
-            |> Enum.reduce(List.flatten(mine), &apply_op/2)
-            |> Enum.map(&Map.put(&1, :_tenant, name))
+        rows =
+          plan.ops
+          |> Enum.reduce(List.flatten(mine), &apply_op/2)
+          |> Enum.map(&Map.put(&1, :_tenant, name))
 
-          {rows, rest}
-        end)
+        {rows, rest}
+      end)
 
-      rows
-    end)
+    rows
   rescue
     e in ErlangError ->
       case e.original do
@@ -94,13 +103,6 @@ defmodule Efsql.Executor do
         _ ->
           reraise e, __STACKTRACE__
       end
-  end
-
-  defp fetch({:union, nodes}) do
-    nodes
-    |> Enum.map(&async_fetch/1)
-    |> Efsql.Repo.await()
-    |> List.flatten()
   end
 
   defp start({:union, nodes}), do: Enum.map(nodes, &async_fetch/1)

@@ -99,4 +99,30 @@ defmodule EfsqlTest.Integration.CrossTenant do
       Efsql.all("select name from *.users where #{context[:both]};", max_tenants: 1)
     end
   end
+
+  test "a read too old for its transaction fails at once instead of retrying", context do
+    sql = "select name from *.users where #{context[:both]};"
+
+    # Open the tenants first, so that only the reads run in the transaction below.
+    {_plan, _rows, tenants} = Efsql.qall(sql)
+
+    db = Ecto.Adapters.FoundationDB.db(Efsql.Repo)
+    attempts = :counters.new(1, [])
+
+    # A read version far older than FoundationDB keeps makes every read fail
+    # with transaction_too_old, which erlfdb would retry. The query joins this
+    # transaction; if the error reached the retry loop, this function would
+    # run again (and again).
+    assert_raise Unsupported,
+                 ~r/read too much to finish in one transaction across 2 tenants/,
+                 fn ->
+                   Ecto.Adapters.FoundationDB.transactional(db, fn tx ->
+                     :counters.add(attempts, 1, 1)
+                     :erlfdb.set_read_version(tx, 1)
+                     Efsql.qall(sql, [], tenants)
+                   end)
+                 end
+
+    assert :counters.get(attempts, 1) == 1
+  end
 end
