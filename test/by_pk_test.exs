@@ -1,11 +1,8 @@
 defmodule EfsqlTest.Integration.SelectByPk do
   use EfsqlTest.Case, async: true
 
-  # Querying _ via
-  # 1. _ identifier
-  # 2. '_' keywords
+  # The primary key is queried through the `_` placeholder.
 
-  # https://github.com/elixir-dbvisor/sql/issues/20
   test "select by pk equals", context do
     tenant_id = context[:tenant_id]
 

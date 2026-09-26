@@ -161,7 +161,17 @@ Connected to /etc/foundationdb/fdb.cluster
 
 ## Supported SQL
 
-All queries require at minimum a `tenant_id.table_name` form in the `FROM` clause. Column names that are reserved SQL words (e.g. `ref`) are supported.
+All queries require at minimum a `tenant_id.table_name` form in the `FROM` clause.
+
+Keywords and unquoted names are case-insensitive; double-quote a name to keep
+its case (`"CreatedAt"`). Most SQL keywords work as bare names, so columns like
+`day`, `user`, `date` or `value` need no quoting. The few that can't, such as
+`order`, `select`, `limit` or `and`, must be quoted (`"order"`). The error says
+so if you forget.
+
+Comments (`-- ...` and `/* ... */`) can go anywhere. A syntax error reports the
+line and column it was found at, and features efsql doesn't support (`OR`,
+`NOT`, `<>`, joins, functions, `GROUP BY`) are rejected by name.
 
 ### Storage IDs
 
@@ -287,9 +297,11 @@ which the adapter keys by the `Decimal`'s term encoding rather than its value.
 Ecto stores `Ecto.Enum` fields as strings, so query those with a plain string
 literal, not an atom.
 
-`BETWEEN` and `LIKE` don't accept typed literals; write a range as
-`inserted_at >= '2024-01-01'::timestamp and inserted_at < '2025-01-01'::timestamp`
-instead.
+Typed literals work anywhere a value does, including `IN` and `BETWEEN`:
+
+```sql
+select col_a from tenant_id.table_name where inserted_at between '2024-01-01'::timestamp and '2025-01-01'::timestamp;
+```
 
 ### Limit
 

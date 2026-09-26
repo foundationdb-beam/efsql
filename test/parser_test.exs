@@ -249,7 +249,7 @@ defmodule Efsql.ParserTest do
                parse("select id from t.users where notes notnull;")
     end
 
-    # The SQL library hangs on these without Efsql.Parser's token rewrite.
+    # Regression: the previous parser library never returned on some of these.
     test "null tests combine with other predicates in any position" do
       assert %Logical.Select{predicates: [{:cmp, :==, :name, "a"}, {:not_null, :notes}]} =
                parse("select id from t.users where name = 'a' and notes is not null;")
@@ -281,8 +281,7 @@ defmodule Efsql.ParserTest do
       end
     end
 
-    # The SQL library hangs or misparses on these without the token
-    # rewrite in Efsql.Parser.parse/1.
+    # Regression: the previous parser library hung or misparsed these.
     test "columns named after reserved words" do
       assert %Logical.Select{predicates: [{:cmp, :==, :day, "x"}]} =
                parse("select id from t.users where day = 'x';")
@@ -336,6 +335,85 @@ defmodule Efsql.ParserTest do
     test "order by with limit" do
       assert %Logical.Select{order: [asc: :name], limit: 2} =
                parse("select id from t.users order by name limit 2;")
+    end
+  end
+
+  describe "translation" do
+    test "parentheses around ANDed conditions flatten" do
+      assert %Logical.Select{
+               predicates: [{:cmp, :==, :a, 1}, {:cmp, :==, :b, 2}, {:cmp, :==, :c, 3}]
+             } =
+               parse("select id from t.users where (a = 1 and (b = 2)) and c = 3;")
+    end
+
+    test "typed literals as BETWEEN bounds" do
+      assert %Logical.Select{
+               predicates: [
+                 {:range, :at, {:>=, ~N[2024-01-01 00:00:00]}, {:<=, ~N[2025-01-01 00:00:00]}}
+               ]
+             } =
+               parse(
+                 "select id from t.users where at between '2024-01-01'::timestamp and '2025-01-01'::timestamp;"
+               )
+    end
+
+    test "a value on the left is flipped" do
+      assert %Logical.Select{predicates: [{:cmp, :>, :age, 40}, {:cmp, :==, :name, "x"}]} =
+               parse("select id from t.users where 40 < age and 'x' = name;")
+    end
+
+    test "unsupported conditions say what is unsupported" do
+      for {condition, message} <- [
+            {"a = 1 or b = 2", "OR is not supported"},
+            {"not a = 1", "NOT is not supported"},
+            {"a not in (1)", "NOT IN is not supported"},
+            {"a not between 1 and 2", "NOT BETWEEN is not supported"},
+            {"a ilike 'x'", "ILIKE is not supported"},
+            {"a <> 1", "<> and != are not supported"},
+            {"a != 1", "<> and != are not supported"},
+            {"a = b", "comparing two fields"},
+            {"1 = 1", "needs a field on one side"},
+            {"'x' in ('x')", "IN needs a field on its left"},
+            {"a", "the field a is not a condition"},
+            {"a = (1, 2)", "a tuple must be"},
+            {"_ = ('p', -1)", "versionstamp is a whole number from 0 to 2^96 - 1"},
+            {"_ = ('p', #{Bitwise.bsl(1, 96)})", "versionstamp is a whole number"}
+          ] do
+        assert_raise Unsupported, ~r/#{Regex.escape(message)}/, fn ->
+          parse("select id from t.users where #{condition};")
+        end
+      end
+    end
+
+    test "field names longer than an atom allows" do
+      long = String.duplicate("x", 256)
+
+      assert_raise Unsupported, ~r/limited to 255 characters/, fn ->
+        parse(~s(select "#{long}" from t.users;))
+      end
+
+      assert %Logical.Select{projection: [_]} =
+               parse(~s(select "#{String.duplicate("x", 255)}" from t.users;))
+    end
+
+    test "syntax errors are SyntaxErrors" do
+      assert_raise Efsql.SQL.SyntaxError, ~r/line 1, column 27: expected an expression/, fn ->
+        parse("select id from t where a =;")
+      end
+    end
+
+    test "every example on the help page parses" do
+      examples =
+        for line <- Efsql.Tui.Help.lines(),
+            {:accent, "   " <> text} <- line,
+            String.starts_with?(text, "select "),
+            do: text
+
+      assert length(examples) >= 9
+
+      for sql <- examples do
+        assert %Logical.Select{} = parse(sql)
+      end
     end
   end
 end
