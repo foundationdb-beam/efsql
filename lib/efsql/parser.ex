@@ -196,8 +196,14 @@ defmodule Efsql.Parser do
 
   defp param({:integer, _meta, value}), do: :erlang.list_to_integer(value)
 
+  # sql 0.5.0 lexes integers as :numeric too.
   defp param({:numeric, _meta, value}) do
-    value |> :erlang.list_to_binary() |> String.to_float()
+    value = :erlang.list_to_binary(value)
+
+    case Integer.parse(value) do
+      {integer, ""} -> integer
+      _ -> String.to_float(value)
+    end
   end
 
   # 'value'::type and cast('value' as type) -- see Efsql.Types
