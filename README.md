@@ -245,6 +245,10 @@ select col_a from tenant_id.table_name where inserted_at >= '2024-03-01'::timest
 -- DateTime, for :utc_datetime / :utc_datetime_usec fields
 select col_a from tenant_id.table_name where seen_at >= '2024-03-01T12:00:00Z'::timestamptz;
 select col_a from tenant_id.table_name where seen_at >= '2024-03-01T14:00:00+02:00'::timestamptz;
+
+-- Date and Time, for :date and :time / :time_usec fields
+select col_a from tenant_id.table_name where birthday = '2024-03-01'::date;
+select col_a from tenant_id.table_name where opens_at < '09:30:00'::time;
 ```
 
 | Type | Elixir term | Alias |
@@ -252,6 +256,8 @@ select col_a from tenant_id.table_name where seen_at >= '2024-03-01T14:00:00+02:
 | `atom` | `Atom` | |
 | `timestamp` | `NaiveDateTime` | `naive_datetime` |
 | `timestamptz` | `DateTime` (UTC) | `utc_datetime` |
+| `date` | `Date` | |
+| `time` | `Time` | |
 
 Elixir has two datetime types and Ecto stores whichever the field declares,
 so pick the literal type that matches the column: a `NaiveDateTime` never
@@ -260,6 +266,11 @@ equals a `DateTime`, and index lookups compare the exact encoding. A
 offset silently dropped; a `timestamptz` literal without one is taken as UTC.
 A bare date means midnight. Fractional seconds are optional, and values
 compare equal regardless of precision.
+
+Numbers need no type: a numeric literal compares by value against a
+`:decimal` field, so `where price < 100` and `where price = 0.1` work. This
+holds for filtering and sorting, but not for an index on a decimal field,
+which the adapter keys by the `Decimal`'s term encoding rather than its value.
 
 Ecto stores `Ecto.Enum` fields as strings, so query those with a plain string
 literal, not an atom.

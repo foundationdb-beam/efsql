@@ -9,6 +9,7 @@ defmodule Efsql.Types do
       where status = 'active'::atom
       where status = cast('active' as atom)
       where inserted_at >= '2024-03-01 12:00:00'::timestamp
+      where birthday = '2024-03-01'::date
 
   Both forms parse to `cast(type, value)`, which converts the already-parsed
   literal into the Elixir term the adapter compares against. Type names are
@@ -26,6 +27,12 @@ defmodule Efsql.Types do
 
   Either accepts a bare date (`'2024-03-01'`) as midnight.
 
+  `date` is a `Date` and `time` a `Time` (for `:time` and `:time_usec`
+  fields), both in ISO 8601.
+
+  Numbers need no annotation: a numeric literal compares by value against a
+  `Decimal` field.
+
   To add a type, add its name to `@types` and a `cast/2` clause for it, plus
   `compare/2` and `index_key/1` clauses if its terms need them.
   """
@@ -33,7 +40,7 @@ defmodule Efsql.Types do
   alias Efsql.Exception.Unsupported
 
   @aliases %{"naive_datetime" => "timestamp", "utc_datetime" => "timestamptz"}
-  @types ~w[atom timestamp timestamptz]
+  @types ~w[atom timestamp timestamptz date time]
 
   def types(), do: @types ++ Map.keys(@aliases)
 
@@ -63,6 +70,20 @@ defmodule Efsql.Types do
     end
   end
 
+  defp do_cast("date", as, value) when is_binary(value) do
+    case Date.from_iso8601(value) do
+      {:ok, date} -> date
+      {:error, _} -> raise Unsupported, "Cannot cast #{inspect(value)} to #{as}"
+    end
+  end
+
+  defp do_cast("time", as, value) when is_binary(value) do
+    case Time.from_iso8601(value) do
+      {:ok, time} -> time
+      {:error, _} -> raise Unsupported, "Cannot cast #{inspect(value)} to #{as}"
+    end
+  end
+
   defp do_cast(type, as, value) when type in @types do
     raise Unsupported, "Cannot cast #{inspect(value)} to #{as}"
   end
@@ -82,28 +103,57 @@ defmodule Efsql.Types do
   end
 
   @doc """
-  Orders two field values, `:lt`, `:eq` or `:gt`. Datetimes compare by the
-  instant they denote (term order would compare their struct fields, and
-  term equality their precision); everything else by Erlang term order.
-  A `NaiveDateTime` never equals a `DateTime`, as in an index lookup.
+  Orders two field values, `:lt`, `:eq` or `:gt`. Dates and times compare
+  chronologically (term order would compare their struct fields, and term
+  equality their precision), and a `Decimal` by value against another
+  `Decimal` or a number (term order puts every number below every map);
+  everything else by Erlang term order. A `NaiveDateTime` never equals a
+  `DateTime`, as in an index lookup.
   """
   def compare(%NaiveDateTime{} = a, %NaiveDateTime{} = b), do: NaiveDateTime.compare(a, b)
   def compare(%DateTime{} = a, %DateTime{} = b), do: DateTime.compare(a, b)
-  def compare(a, b) when a == b, do: :eq
-  def compare(a, b) when a < b, do: :lt
-  def compare(_a, _b), do: :gt
+  def compare(%Date{} = a, %Date{} = b), do: Date.compare(a, b)
+  def compare(%Time{} = a, %Time{} = b), do: Time.compare(a, b)
+
+  def compare(a, b) when is_struct(a, Decimal) or is_struct(b, Decimal) do
+    with %Decimal{} = da <- to_decimal(a),
+         %Decimal{} = db <- to_decimal(b) do
+      Decimal.compare(da, db)
+    else
+      nil -> term_compare(a, b)
+    end
+  end
+
+  def compare(a, b), do: term_compare(a, b)
+
+  defp term_compare(a, b) when a == b, do: :eq
+  defp term_compare(a, b) when a < b, do: :lt
+  defp term_compare(_a, _b), do: :gt
+
+  # nil when the value has no ordered Decimal counterpart (NaN, or not a
+  # number), which Decimal.compare would raise on.
+  defp to_decimal(%Decimal{coef: :NaN}), do: nil
+  defp to_decimal(%Decimal{} = d), do: d
+  defp to_decimal(n) when is_integer(n), do: Decimal.new(n)
+  defp to_decimal(n) when is_float(n), do: Decimal.from_float(n)
+  defp to_decimal(_), do: nil
 
   @doc """
   The value to push to the adapter for an index lookup. efsql queries
   schemaless, so the adapter can't encode a param by its field's Ecto type;
-  encode datetimes here exactly as the adapter's default indexer does when
-  it writes the index.
+  encode dates and times here exactly as the adapter's default indexer
+  does when it writes the index.
   """
   def index_key(%NaiveDateTime{} = x),
     do: x |> NaiveDateTime.add(0, :microsecond) |> NaiveDateTime.to_iso8601(:basic)
 
   def index_key(%DateTime{} = x),
     do: x |> DateTime.add(0, :microsecond) |> DateTime.to_iso8601(:basic)
+
+  def index_key(%Date{} = x), do: Date.to_iso8601(x, :basic)
+
+  def index_key(%Time{} = x),
+    do: x |> Time.add(0, :microsecond) |> Time.to_iso8601(:basic)
 
   def index_key(x), do: x
 end

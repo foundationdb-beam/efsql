@@ -187,6 +187,34 @@ defmodule Efsql.ParserTest do
                parse("select id from t.users where at < '2024-03-01'::timestamptz;")
     end
 
+    test "date literal is a Date" do
+      assert %Logical.Select{predicates: [{:cmp, :==, :day, ~D[2024-03-01]}]} =
+               parse("select id from t.users where day = '2024-03-01'::date;")
+
+      assert %Logical.Select{predicates: [{:in, :day, [~D[2024-03-01], ~D[2024-03-02]]}]} =
+               parse(
+                 "select id from t.users where day in (cast('2024-03-01' as date), '2024-03-02'::date);"
+               )
+    end
+
+    test "time literal is a Time" do
+      assert %Logical.Select{predicates: [{:cmp, :>=, :at, ~T[12:34:56]}]} =
+               parse("select id from t.users where at >= '12:34:56'::time;")
+
+      assert %Logical.Select{predicates: [{:cmp, :>=, :at, ~T[12:34:56.123456]}]} =
+               parse("select id from t.users where at >= '12:34:56.123456'::time;")
+    end
+
+    test "malformed date and time raise" do
+      assert_raise Unsupported, ~r/Cannot cast "2024-02-30" to date/, fn ->
+        parse("select id from t.users where day = '2024-02-30'::date;")
+      end
+
+      assert_raise Unsupported, ~r/Cannot cast "25:00:00" to time/, fn ->
+        parse("select id from t.users where at = '25:00:00'::time;")
+      end
+    end
+
     test "malformed timestamp raises" do
       assert_raise Unsupported, ~r/Cannot cast "yesterday" to timestamp/, fn ->
         parse("select id from t.users where at >= 'yesterday'::timestamp;")
