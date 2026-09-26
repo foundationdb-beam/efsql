@@ -149,6 +149,50 @@ defmodule Efsql.ParserTest do
                parse("select id from t.users where status >= 'a'::atom and status < 'm'::atom;")
     end
 
+    test "timestamp literal is a NaiveDateTime" do
+      assert %Logical.Select{predicates: [{:cmp, :>=, :at, ~N[2024-03-01 12:34:56]}]} =
+               parse("select id from t.users where at >= '2024-03-01 12:34:56'::timestamp;")
+
+      assert %Logical.Select{predicates: [{:cmp, :>=, :at, ~N[2024-03-01 12:34:56.123456]}]} =
+               parse(
+                 "select id from t.users where at >= '2024-03-01T12:34:56.123456'::timestamp;"
+               )
+
+      assert %Logical.Select{predicates: [{:cmp, :>=, :at, ~N[2024-03-01 00:00:00]}]} =
+               parse("select id from t.users where at >= cast('2024-03-01' as timestamp);")
+
+      assert %Logical.Select{predicates: [{:cmp, :>=, :at, ~N[2024-03-01 12:34:56]}]} =
+               parse("select id from t.users where at >= '2024-03-01 12:34:56'::naive_datetime;")
+    end
+
+    test "timestamp literal rejects a time zone offset" do
+      assert_raise Unsupported, ~r/use timestamptz/, fn ->
+        parse("select id from t.users where at >= '2024-03-01 12:34:56Z'::timestamp;")
+      end
+    end
+
+    test "timestamptz literal is a UTC DateTime" do
+      assert %Logical.Select{predicates: [{:cmp, :>=, :at, ~U[2024-03-01 12:34:56Z]}]} =
+               parse("select id from t.users where at >= '2024-03-01 12:34:56Z'::timestamptz;")
+
+      assert %Logical.Select{predicates: [{:cmp, :>=, :at, ~U[2024-03-01 10:34:56Z]}]} =
+               parse(
+                 "select id from t.users where at >= '2024-03-01T12:34:56+02:00'::timestamptz;"
+               )
+
+      assert %Logical.Select{predicates: [{:cmp, :>=, :at, ~U[2024-03-01 12:34:56Z]}]} =
+               parse("select id from t.users where at >= '2024-03-01 12:34:56'::utc_datetime;")
+
+      assert %Logical.Select{predicates: [{:cmp, :<, :at, ~U[2024-03-01 00:00:00Z]}]} =
+               parse("select id from t.users where at < '2024-03-01'::timestamptz;")
+    end
+
+    test "malformed timestamp raises" do
+      assert_raise Unsupported, ~r/Cannot cast "yesterday" to timestamp/, fn ->
+        parse("select id from t.users where at >= 'yesterday'::timestamp;")
+      end
+    end
+
     test "unknown type raises" do
       assert_raise Unsupported, ~r/Unknown type 'widget'/, fn ->
         parse("select id from t.users where status = 'active'::widget;")

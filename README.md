@@ -221,7 +221,7 @@ select col_a, col_b from tenant_id.table_name where index_col >= 'baz' and index
 select col_a, col_b from tenant_id.table_name where index_col between 'baz' and 'zaz';
 ```
 
-Since efsql doesn't have access to the Ecto schema, type checking is loosened. For example, a `naive_datetime` indexed column must be queried using its string representation.
+Since efsql doesn't have access to the Ecto schema, type checking is loosened: a value must be written as the type the column stores. For datetime columns, use a [typed literal](#typed-literals).
 
 ### Typed literals
 
@@ -230,17 +230,43 @@ has no SQL literal, annotate the literal with a type using the PostgreSQL cast
 operator `::`, or the standard `CAST(... AS ...)`:
 
 ```sql
--- atoms, e.g. an Ecto.Enum column
+-- atoms
 select col_a from tenant_id.table_name where status = 'active'::atom;
 select col_a from tenant_id.table_name where status = cast('active' as atom);
 select col_a from tenant_id.table_name where status in ('active'::atom, 'pending'::atom);
 
 -- module names are atoms too
 select col_a from tenant_id.table_name where kind = 'Elixir.MyApp.Widget'::atom;
+
+-- NaiveDateTime, for :naive_datetime / :naive_datetime_usec fields
+select col_a from tenant_id.table_name where inserted_at >= '2024-03-01 12:00:00'::timestamp;
+select col_a from tenant_id.table_name where inserted_at >= '2024-03-01'::timestamp;
+
+-- DateTime, for :utc_datetime / :utc_datetime_usec fields
+select col_a from tenant_id.table_name where seen_at >= '2024-03-01T12:00:00Z'::timestamptz;
+select col_a from tenant_id.table_name where seen_at >= '2024-03-01T14:00:00+02:00'::timestamptz;
 ```
 
-Supported types: `atom`. `BETWEEN` and `LIKE` don't accept typed literals;
-write a range as `status >= 'a'::atom and status < 'm'::atom` instead.
+| Type | Elixir term | Alias |
+| --- | --- | --- |
+| `atom` | `Atom` | |
+| `timestamp` | `NaiveDateTime` | `naive_datetime` |
+| `timestamptz` | `DateTime` (UTC) | `utc_datetime` |
+
+Elixir has two datetime types and Ecto stores whichever the field declares,
+so pick the literal type that matches the column: a `NaiveDateTime` never
+equals a `DateTime`, and index lookups compare the exact encoding. A
+`timestamp` literal with a time zone offset is rejected rather than having the
+offset silently dropped; a `timestamptz` literal without one is taken as UTC.
+A bare date means midnight. Fractional seconds are optional, and values
+compare equal regardless of precision.
+
+Ecto stores `Ecto.Enum` fields as strings, so query those with a plain string
+literal, not an atom.
+
+`BETWEEN` and `LIKE` don't accept typed literals; write a range as
+`inserted_at >= '2024-01-01'::timestamp and inserted_at < '2025-01-01'::timestamp`
+instead.
 
 ### Limit
 
