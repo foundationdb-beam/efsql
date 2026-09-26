@@ -456,7 +456,7 @@ defmodule Efsql.Tui.App do
 
   defp run_query(model, sql) do
     sql = if String.ends_with?(sql, ";"), do: sql, else: sql <> ";"
-    session = %{tenant: model.tenant, tenants: model.tenants}
+    session = %{tenant: model.tenant, tenants: model.tenants, storage_id: model.storage_id}
 
     fun = fn ->
       started = System.monotonic_time(:millisecond)

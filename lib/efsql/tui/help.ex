@@ -77,6 +77,13 @@ defmodule Efsql.Tui.Help do
          "Aggregates: count(*), count(f), sum, min, max, avg.",
          {:note, "selected fields must be grouped; having is not supported"}
        ]},
+      {"Every tenant",
+       [
+         "Write * for the tenant to read every tenant of the storage id.",
+         {:sql, "select _tenant, count(*) from *.users group by _tenant;"},
+         {:sql, "select * from *.users where _tenant like 'acme%';"},
+         {:note, "a _tenant condition picks the tenants; one snapshot across them"}
+       ]},
       {"How a query runs",
        [
          "Constraints an index or the key can answer are pushed to",

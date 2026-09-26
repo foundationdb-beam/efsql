@@ -47,6 +47,43 @@ defmodule Efsql.ParserTest do
     end
   end
 
+  describe "every tenant" do
+    test "* for the tenant reads every tenant of a storage id" do
+      assert %Logical.Select{prefix: {:all_tenants, nil}, source: "users"} =
+               parse("select id from *.users;")
+
+      assert %Logical.Select{prefix: {:all_tenants, "customer"}, source: "users"} =
+               parse("select id from customer.*.users;")
+    end
+
+    test "_tenant is a field of a query across tenants" do
+      assert %Logical.Select{
+               projection: [:_tenant, :"count(*)"],
+               predicates: [{:in, :_tenant, ["a", "b"]}],
+               group_by: [:_tenant],
+               order: [asc: :_tenant]
+             } =
+               parse(
+                 "select _tenant, count(*) from *.users where _tenant in ('a', 'b') " <>
+                   "group by _tenant order by _tenant;"
+               )
+    end
+
+    test "_tenant anywhere else is unsupported" do
+      for sql <- [
+            "select _tenant from t.users;",
+            "select id from t.users where _tenant = 'a';",
+            "select id from t.users order by _tenant;",
+            "select count(*) from t.users group by _tenant;",
+            "select count(_tenant) from t.users;"
+          ] do
+        assert_raise Unsupported, ~r/_tenant is only available in a query across tenants/, fn ->
+          parse(sql)
+        end
+      end
+    end
+  end
+
   describe "where" do
     test "equality" do
       assert %Logical.Select{predicates: [{:cmp, :==, :name, "Alice"}]} =

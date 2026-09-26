@@ -2,25 +2,30 @@ defmodule Efsql.Tui.Session do
   @moduledoc """
   Session-aware query execution: statements without a tenant qualifier run
   against the session's active tenant, so `select id from users;` works
-  once a tenant is activated in the Navigator. Tenant-qualified statements
-  behave exactly as in the line CLI.
+  once a tenant is activated in the Navigator, and `*.users` reads every
+  tenant of the active storage id. Tenant-qualified statements behave
+  exactly as in the line CLI.
   """
 
-  def qall(_sql, %{tenant: nil}) do
+  alias Efsql.Logical
+
+  def qall(sql, session) do
+    sql
+    |> Efsql.Parser.sql_to_logical()
+    |> in_session(session)
+    |> Efsql.run_logical([], session.tenants)
+  end
+
+  defp in_session(%Logical.Select{prefix: {:all_tenants, nil}} = logical, session),
+    do: %Logical.Select{logical | prefix: {:all_tenants, session[:storage_id]}}
+
+  defp in_session(%Logical.Select{prefix: nil}, %{tenant: nil}) do
     raise Efsql.Exception.Unsupported,
           "no active tenant — qualify the table (tenant.table) or pick a tenant in the navigator"
   end
 
-  def qall(sql, %{tenant: tenant, tenants: tenants}) do
-    logical = %Efsql.Logical.Select{} = Efsql.Parser.sql_to_logical(sql)
+  defp in_session(%Logical.Select{prefix: nil} = logical, %{tenant: tenant}),
+    do: %Logical.Select{logical | tenant: tenant}
 
-    {logical, tenants} =
-      case logical.prefix do
-        nil -> {%{logical | tenant: tenant}, tenants}
-        _ -> Efsql.resolve_tenant(logical, tenants)
-      end
-
-    plan = logical |> Efsql.Rewrite.normalize() |> Efsql.Planner.plan([])
-    {plan, Efsql.Executor.run(plan), tenants}
-  end
+  defp in_session(logical, _session), do: logical
 end

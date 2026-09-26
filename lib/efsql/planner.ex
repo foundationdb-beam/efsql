@@ -32,24 +32,27 @@ defmodule Efsql.Planner do
   @pk_field :_
 
   def plan(%Logical.Select{group_by: group_by} = logical, options) when is_list(group_by) do
+    {rows, ops} = split(logical)
+    %Plan{} = plan = plan(rows, options)
+    %Plan{plan | ops: plan.ops ++ ops, columns: columns(logical.projection)}
+  end
+
+  def plan(%Logical.Select{} = logical, options),
+    do: %Plan{plan_rows(logical, options) | columns: columns(logical.projection)}
+
+  @doc """
+  Splits a query into the rows to read and the operators that must then
+  run over all of them: the read carries only the filtering, and grouping,
+  ordering, the limit and the final projection come after. A grouped
+  query is always planned this way; a query across tenants is too, since
+  its order and limit apply to the tenants' rows together.
+
+  The read never asks for `:_tenant`, which isn't stored; the executor
+  adds it to each row of a query across tenants.
+  """
+  def split(%Logical.Select{group_by: group_by} = logical) when is_list(group_by) do
     %Logical.Select{aggregates: aggregates, order: order, limit: limit} = logical
-
     read = Enum.uniq(group_by ++ for({_name, _fun, f} <- aggregates, f != :star, do: f))
-
-    %Plan{} =
-      plan =
-      plan(
-        %Logical.Select{
-          logical
-          | projection: if(read == [], do: :star, else: read),
-            order: [],
-            limit: nil,
-            group_by: nil,
-            aggregates: []
-        },
-        options
-      )
-
     columns = group_by ++ Enum.map(aggregates, &elem(&1, 0))
 
     ops =
@@ -61,14 +64,40 @@ defmodule Efsql.Planner do
         {:project, logical.projection}
       )
 
-    %Plan{plan | ops: plan.ops ++ ops, columns: columns(logical.projection)}
+    {rows(logical, read), ops}
   end
 
-  def plan(%Logical.Select{} = logical, options),
-    do: %Plan{plan_rows(logical, options) | columns: columns(logical.projection)}
+  def split(%Logical.Select{projection: projection, order: order, limit: limit} = logical) do
+    read =
+      if projection == :star,
+        do: :star,
+        else: Enum.uniq(projection ++ Enum.map(order, fn {_dir, f} -> f end))
 
-  defp columns(:star), do: nil
-  defp columns(fields), do: Enum.uniq(fields)
+    ops =
+      []
+      |> append_if(order != [], {:sort, order})
+      |> append_if(limit != nil, {:limit, limit})
+      |> append_if(projection != :star and read != projection, {:project, projection})
+
+    {rows(logical, read), ops}
+  end
+
+  defp rows(logical, read) do
+    read = if read == :star, do: [], else: read -- [:_tenant]
+
+    %Logical.Select{
+      logical
+      | projection: if(read == [], do: :star, else: read),
+        order: [],
+        limit: nil,
+        group_by: nil,
+        aggregates: []
+    }
+  end
+
+  @doc "The result columns in select-list order, nil for `select *`."
+  def columns(:star), do: nil
+  def columns(fields), do: Enum.uniq(fields)
 
   defp plan_rows(%Logical.Select{} = logical, options) do
     %Logical.Select{predicates: preds, order: sort, projection: projection} = logical

@@ -7,10 +7,20 @@ defmodule Efsql.Executor do
   false — including NOT LIKE. IS NULL matches a nil or absent field. Sorting places NULLs last ascending and first
   descending, matching PostgreSQL's defaults. Values compare with
   `Efsql.Types.compare/2`, so datetimes order chronologically.
+
+  A query across tenants (`{:fan_out, [{tenant_name, plan}]}`) reads every
+  tenant in one FoundationDB transaction on the database: each tenant's
+  reads are started, then all awaited together, so they are pipelined and
+  see one snapshot. Each tenant's own operators run on its rows, which
+  then get `_tenant`, before the shared operators run on them all.
   """
 
+  alias Efsql.Exception.Unsupported
   alias Efsql.Physical.Plan
   alias Efsql.Types
+
+  # transaction_too_old and transaction_timed_out
+  @too_long [1007, 1031]
 
   @cmp_ops ~w[== > >= < <=]a
   @cmp_results %{
@@ -24,6 +34,9 @@ defmodule Efsql.Executor do
   def run(%Plan{access: access, ops: ops}) do
     Enum.reduce(ops, fetch(access), &apply_op/2)
   end
+
+  @doc "Whether `row` satisfies every one of `predicates`, with SQL NULL semantics."
+  def matches?(row, predicates), do: Enum.all?(predicates, &eval(&1, row))
 
   # -- access nodes --
 
@@ -39,12 +52,59 @@ defmodule Efsql.Executor do
     Efsql.Repo.all_from_source(query, options)
   end
 
+  defp fetch({:fan_out, []}), do: []
+
+  defp fetch({:fan_out, tenant_plans}) do
+    db = Ecto.Adapters.FoundationDB.db(Efsql.Repo)
+
+    Ecto.Adapters.FoundationDB.transactional(db, fn tx ->
+      # transaction_too_old is retryable, but a read too big for one
+      # transaction would only fail the same way again.
+      :erlfdb.set_option(tx, :retry_limit, 2)
+
+      started =
+        for {name, %Plan{access: access} = plan} <- tenant_plans,
+            do: {name, plan, start(access)}
+
+      results = started |> Enum.flat_map(&elem(&1, 2)) |> Efsql.Repo.await()
+
+      {rows, []} =
+        Enum.flat_map_reduce(started, results, fn {name, plan, futures}, results ->
+          {mine, rest} = Enum.split(results, length(futures))
+
+          rows =
+            plan.ops
+            |> Enum.reduce(List.flatten(mine), &apply_op/2)
+            |> Enum.map(&Map.put(&1, :_tenant, name))
+
+          {rows, rest}
+        end)
+
+      rows
+    end)
+  rescue
+    e in ErlangError ->
+      case e.original do
+        {:erlfdb_error, code} when code in @too_long ->
+          raise Unsupported,
+                "the query read too much to finish in one transaction across " <>
+                  "#{length(tenant_plans)} tenants; narrow it with a condition on _tenant " <>
+                  "or the WHERE clause"
+
+        _ ->
+          reraise e, __STACKTRACE__
+      end
+  end
+
   defp fetch({:union, nodes}) do
     nodes
     |> Enum.map(&async_fetch/1)
     |> Efsql.Repo.await()
     |> List.flatten()
   end
+
+  defp start({:union, nodes}), do: Enum.map(nodes, &async_fetch/1)
+  defp start(access), do: [async_fetch(access)]
 
   defp async_fetch({:pk_range, query, id_start, id_end, options}) do
     Efsql.Repo.async_all_range(query, id_start, id_end, options)
