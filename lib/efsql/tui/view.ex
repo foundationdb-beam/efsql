@@ -292,7 +292,7 @@ defmodule Efsql.Tui.View do
   end
 
   defp results_lines(%Model{rows: []} = model, _height, _cols) do
-    [[{:dim, " (0 rows, #{model.elapsed_ms} ms)"}]]
+    [[{:dim, " (0 rows, #{model.elapsed_ms} ms)" <> snapshots_note(model)}]]
   end
 
   defp results_lines(model, height, cols) do
@@ -318,11 +318,21 @@ defmodule Efsql.Tui.View do
       [
         {:dim,
          " (#{count} rows, #{model.elapsed_ms} ms)" <>
-           hidden_note(model, column_map) <> browse_hint(model, count)}
+           snapshots_note(model) <> hidden_note(model, column_map) <> browse_hint(model, count)}
       ]
 
     [header] ++ rows ++ [footer]
   end
+
+  # A query across tenants read in batches says how many transactions it took.
+  defp snapshots_note(%Model{plan: %Efsql.Physical.Plan{} = plan}) do
+    case Efsql.Fanout.transactions(plan) do
+      1 -> ""
+      n -> " · #{n} transactions"
+    end
+  end
+
+  defp snapshots_note(_model), do: ""
 
   defp header_of(_model, :split), do: "…"
   defp header_of(model, {:col, ix}), do: model.columns |> Enum.at(ix) |> to_string()

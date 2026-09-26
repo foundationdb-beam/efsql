@@ -185,6 +185,48 @@ select * from admins.engineering.users;
 
 The two-part `tenant_id.table_name` form continues to use the storage ID set at startup via `--storage-id` (or the default if none was given).
 
+### Query every tenant
+
+The tenants of one storage ID share a schema, so a query can read all of
+them at once. Write `*` for the tenant:
+
+```sql
+select _tenant, count(*) from customer.*.orders group by _tenant;
+select id, total, _tenant from *.orders where status = 'paid' order by total desc limit 20;
+select * from *.orders where _tenant like 'acme%';
+```
+
+`*.table` uses the startup storage ID (in the TUI, the one you're browsing),
+and `storage_id.*.table` names one. Every row gets a `_tenant` field with its
+tenant's name, which you can select, filter, group and sort by like any
+other.
+
+A condition on `_tenant` decides which tenants are read at all, so
+`where _tenant = 'acme'` never touches the others. Everything else runs in
+each tenant, with that tenant's own indexes, and grouping, ordering and
+`LIMIT` then apply to all the rows together.
+
+The tenants are read in a single FoundationDB transaction, so the result is
+one consistent snapshot. That also means the whole read has to finish within
+FoundationDB's five-second transaction limit; a query that reads too much
+says so, and a `_tenant` or `WHERE` condition narrows it. One transaction
+reads at most 100 tenants unless the `:efsql, :max_tenants` setting says
+otherwise.
+
+When the tenants don't fit in one transaction, read them in batches:
+
+```
+\set tenant_batch 25
+```
+
+Each batch of 25 tenants is then its own transaction, and there is no
+tenant limit. Up to four batches are read at once (the
+`:efsql, :batch_concurrency` setting, or `batch_concurrency:` from Elixir). Grouping, ordering and `LIMIT` still apply to all the rows
+together, but the result is no longer one snapshot: each batch sees the
+database at a slightly different moment, and the result says how many
+transactions it came from. `\set tenant_batch off` goes back to one
+transaction. (From Elixir, pass `tenant_batch: 25` to `Efsql.qall/3`.)
+
 ### Select rows
 
 ```sql

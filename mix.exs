@@ -8,6 +8,8 @@ defmodule Efsql.MixProject do
       description: "SQL frontend and data explorer for FoundationDB",
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
+      # src/efsql_sql_grammar.yrl, the SQL grammar
+      compilers: [:yecc] ++ Mix.compilers(),
       deps: deps(),
       elixirc_paths: elixirc_paths(Mix.env()),
       releases: releases(),

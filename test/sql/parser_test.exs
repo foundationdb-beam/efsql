@@ -74,6 +74,18 @@ defmodule Efsql.SQL.ParserTest do
       assert %Select{from: ["user", "date"]} = parse("select * from user.date")
     end
 
+    test "* for the tenant means every tenant" do
+      assert %Select{from: [:star, "t"]} = parse("select * from *.t")
+      assert %Select{from: ["storage", :star, "t"]} = parse("select a from storage . * . t")
+    end
+
+    test "* only stands for a tenant" do
+      assert reason("select * from *") == "expected '.', got the end of the statement"
+      assert reason("select * from t.*") == "expected '.', got the end of the statement"
+      assert reason("select * from *.*.t") == "expected a name, got '*'"
+      assert reason("select * from s.t.*") == "expected a name, got '*'"
+    end
+
     test "four parts is too many" do
       assert reason("select * from a.b.c.d") =~ "at most three parts"
     end

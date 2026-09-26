@@ -1,5 +1,5 @@
 defmodule Efsql.Cli do
-  defstruct args: [], history: [], debug: false, tenants: %{}, limit: 15
+  defstruct args: [], history: [], debug: false, tenants: %{}, limit: 15, tenant_batch: nil
 
   use GenServer
 
@@ -93,6 +93,8 @@ defmodule Efsql.Cli do
         Meta-commands:
           \\tenants [storage_id]  list tenants (optionally for a specific storage id)
           \\set limit N           set the default row limit (currently #{state.limit})
+          \\set tenant_batch N|off  read *.table queries N tenants per transaction
+                                 (currently #{state.tenant_batch || "off"})
           \\?                     show this help
         """,
         :light_black
@@ -150,6 +152,22 @@ defmodule Efsql.Cli do
     end
   end
 
+  defp handle_input("\\set tenant_batch " <> rest, state = %__MODULE__{}) do
+    case {String.trim(rest), Integer.parse(String.trim(rest))} do
+      {"off", _} ->
+        Owl.IO.puts(Owl.Data.tag("tenant_batch off: one transaction", :light_black))
+        %__MODULE__{state | tenant_batch: nil}
+
+      {_, {n, ""}} when n > 0 ->
+        Owl.IO.puts(Owl.Data.tag("tenant_batch set to #{n}", :light_black))
+        %__MODULE__{state | tenant_batch: n}
+
+      _ ->
+        print_error("Usage: \\set tenant_batch <positive integer> | off")
+        state
+    end
+  end
+
   defp handle_input(data, state = %__MODULE__{}) do
     limit_sql = "limit #{state.limit + 1}"
 
@@ -160,9 +178,11 @@ defmodule Efsql.Cli do
             do: {data, :all},
             else: {String.replace(data, ~r/;\s*$/, " #{limit_sql};"), state.limit}
 
-        {call, rows, tenants} = Efsql.qall(sql, [], state.tenants)
+        options = if state.tenant_batch, do: [tenant_batch: state.tenant_batch], else: []
+        {call, rows, tenants} = Efsql.qall(sql, options, state.tenants)
         if state.debug, do: print_debug(call)
         print_table(rows, display_limit, call.columns)
+        print_snapshots(Efsql.Fanout.transactions(call))
         {tenants}
       rescue
         e ->
@@ -255,6 +275,12 @@ defmodule Efsql.Cli do
     n = length(rows)
     label = if more?, do: "(#{n} rows, more available — add LIMIT)", else: "(#{n} rows)"
     Owl.IO.puts(Owl.Data.tag(label, :light_black))
+  end
+
+  defp print_snapshots(1), do: :ok
+
+  defp print_snapshots(n) do
+    Owl.IO.puts(Owl.Data.tag("(read in #{n} transactions)", :yellow))
   end
 
   defp column_sorter(nil), do: :asc

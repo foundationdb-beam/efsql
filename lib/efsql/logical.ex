@@ -12,7 +12,10 @@ defmodule Efsql.Logical do
     * `{:in, field, values}`
     * `{:is_null, field}` / `{:not_null, field}`
 
-  The primary key is the pseudo-field `:_`.
+  The primary key is the pseudo-field `:_`. A query across every tenant of
+  a storage id (`*.table`) also has `:_tenant`, the tenant's name, which
+  isn't stored: predicates on it choose the tenants to read, and the
+  executor adds it to each row.
 
   A grouped query (`GROUP BY`, or any aggregate) has `group_by` set to its
   key fields (`[]` for one group over every row) and `aggregates` to
@@ -26,7 +29,9 @@ defmodule Efsql.Logical do
 
   defmodule Select do
     defstruct source: nil,
-              # tenant name, or {storage_id, tenant_name}, as written in the SQL
+              # tenant name, or {storage_id, tenant_name}, as written in the SQL;
+              # {:all_tenants, storage_id | nil} for `*.table`, every tenant of
+              # a storage id
               prefix: nil,
               # the opened EctoFoundationDB.Tenant, resolved before planning
               tenant: nil,

@@ -20,7 +20,7 @@ defmodule EfsqlTest.SQLGen do
   def select() do
     %Select{
       fields: if(one_in(4), do: :star, else: list(1..4, &field/0)),
-      from: list(1..3, &name/0),
+      from: from(),
       where: maybe(fn -> expr(3) end),
       group_by: if(one_in(3), do: list(1..3, &name/0), else: []),
       order_by: list(0..3, fn -> {order_key(), Enum.random([:asc, :desc])} end),
@@ -29,6 +29,15 @@ defmodule EfsqlTest.SQLGen do
   end
 
   # -- trees --
+
+  # A table name, sometimes across every tenant: *.t or s.*.t.
+  defp from() do
+    case Enum.random(1..5) do
+      1 -> [:star, name()]
+      2 -> [name(), :star, name()]
+      _ -> list(1..3, &name/0)
+    end
+  end
 
   # Function names must lex as plain words that aren't keywords.
   @functions ~w[count sum min max avg lower]
@@ -101,7 +110,7 @@ defmodule EfsqlTest.SQLGen do
       kw("select"),
       fields(select.fields),
       kw("from"),
-      Enum.intersperse(Enum.map(select.from, &print_name/1), p(".")),
+      Enum.intersperse(Enum.map(select.from, &print_from_part/1), p(".")),
       if(select.where, do: [kw("where"), print(select.where)], else: []),
       group_by(select.group_by),
       order_by(select.order_by),
@@ -124,6 +133,9 @@ defmodule EfsqlTest.SQLGen do
 
   defp print_aggregate({:aggregate, function, arg, _alias}),
     do: [kw(function), p("("), if(arg == :star, do: p("*"), else: print_name(arg)), p(")")]
+
+  defp print_from_part(:star), do: p("*")
+  defp print_from_part(name), do: print_name(name)
 
   defp group_by([]), do: []
   defp group_by(names), do: [kw("group"), kw("by"), comma(Enum.map(names, &print_name/1))]

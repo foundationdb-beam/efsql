@@ -31,13 +31,34 @@ defmodule Efsql.Parser do
       limit: select.limit
     }
 
-    if grouped?(select),
-      do: grouped(logical, select),
-      else: %Logical.Select{
-        logical
-        | projection: projection(select.fields),
-          order: Enum.map(select.order_by, fn {name, dir} -> {dir, field(name)} end)
-      }
+    logical =
+      if grouped?(select),
+        do: grouped(logical, select),
+        else: %Logical.Select{
+          logical
+          | projection: projection(select.fields),
+            order: Enum.map(select.order_by, fn {name, dir} -> {dir, field(name)} end)
+        }
+
+    check_tenant_field(logical)
+  end
+
+  # `_tenant` only exists in a query across tenants.
+  defp check_tenant_field(%Logical.Select{prefix: {:all_tenants, _}} = logical), do: logical
+
+  defp check_tenant_field(logical) do
+    used =
+      if(is_list(logical.projection), do: logical.projection, else: []) ++
+        Enum.map(logical.predicates, &Logical.predicate_field/1) ++
+        Enum.map(logical.order, &elem(&1, 1)) ++
+        (logical.group_by || []) ++ Enum.map(logical.aggregates, &elem(&1, 2))
+
+    if :_tenant in used do
+      raise Unsupported,
+            "_tenant is only available in a query across tenants (from *.table)"
+    end
+
+    logical
   end
 
   defp projection(:star), do: :star
@@ -62,7 +83,7 @@ defmodule Efsql.Parser do
     raise Unsupported, "SELECT * can't be used with GROUP BY or aggregates; name the fields"
   end
 
-  defp grouped(logical, select) do
+  defp grouped(%Logical.Select{} = logical, select) do
     group_by = Enum.map(select.group_by, &group_field/1)
 
     {columns, aggregates} =
@@ -144,6 +165,8 @@ defmodule Efsql.Parser do
     {name, {name, String.to_atom(function), arg}}
   end
 
+  defp split_from([:star, table]), do: {{:all_tenants, nil}, table}
+  defp split_from([storage, :star, table]), do: {{:all_tenants, storage}, table}
   defp split_from([table]), do: {nil, table}
   defp split_from([tenant, table]), do: {tenant, table}
   defp split_from([storage, tenant, table]), do: {{storage, tenant}, table}

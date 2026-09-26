@@ -14,7 +14,7 @@ defmodule Efsql.SQL.AST do
 
     @type t :: %__MODULE__{
             fields: :star | [String.t() | Efsql.SQL.AST.aggregate()],
-            from: [String.t(), ...],
+            from: [String.t() | :star, ...],
             where: Efsql.SQL.AST.expr() | nil,
             group_by: [String.t()],
             order_by: [{String.t() | Efsql.SQL.AST.aggregate(), :asc | :desc}],
@@ -22,7 +22,8 @@ defmodule Efsql.SQL.AST do
           }
 
     # `from` holds the dotted name's parts: [table], [tenant, table] or
-    # [storage_id, tenant, table].
+    # [storage_id, tenant, table]. A tenant of `*` means every tenant:
+    # [:star, table] or [storage_id, :star, table].
     defstruct fields: :star, from: [], where: nil, group_by: [], order_by: [], limit: nil
   end
 

@@ -62,6 +62,10 @@ table -> name : ['$1'].
 table -> name '.' name : ['$1', '$3'].
 table -> name '.' name '.' name : ['$1', '$3', '$5'].
 
+%% Every tenant: `*.table`, or `storage_id.*.table`.
+table -> '*' '.' name : [star, '$3'].
+table -> name '.' '*' '.' name : ['$1', star, '$5'].
+
 where_clause -> '$empty' : nil.
 where_clause -> 'where' expr : '$2'.
 

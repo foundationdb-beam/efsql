@@ -27,6 +27,8 @@ defmodule Efsql.Tui.App do
               flash: nil,
               busy: nil,
               limit: 15,
+              # tenants per transaction for *.table queries; nil is one transaction
+              tenant_batch: nil,
               cluster_file: nil,
               # navigator
               nav_path: [],
@@ -437,6 +439,9 @@ defmodule Efsql.Tui.App do
       "\\set limit " <> n ->
         set_limit(model, n)
 
+      "\\set tenant_batch " <> n ->
+        set_tenant_batch(model, n)
+
       sql ->
         run_query(model, sql)
     end
@@ -454,9 +459,31 @@ defmodule Efsql.Tui.App do
     end
   end
 
+  defp set_tenant_batch(model, n) do
+    case {String.trim(n), Integer.parse(String.trim(n))} do
+      {"off", _} ->
+        {%{model | tenant_batch: nil, input: "", qcursor: 0, flash: {:info, "tenant_batch off"}},
+         []}
+
+      {_, {n, ""}} when n > 0 ->
+        flash = {:info, "tenant_batch set to #{n}"}
+        {%{model | tenant_batch: n, input: "", qcursor: 0, flash: flash}, []}
+
+      _ ->
+        flash = {:error, "usage: \\set tenant_batch N|off"}
+        {%{model | flash: flash, input: "", qcursor: 0}, []}
+    end
+  end
+
   defp run_query(model, sql) do
     sql = if String.ends_with?(sql, ";"), do: sql, else: sql <> ";"
-    session = %{tenant: model.tenant, tenants: model.tenants}
+
+    session = %{
+      tenant: model.tenant,
+      tenants: model.tenants,
+      storage_id: model.storage_id,
+      tenant_batch: model.tenant_batch
+    }
 
     fun = fn ->
       started = System.monotonic_time(:millisecond)
