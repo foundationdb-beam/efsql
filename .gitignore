@@ -31,3 +31,4 @@ dev-efsql
 
 # Local dev launcher; also the name mix escript.build would write here.
 /efsql
+/src/efsql_sql_*.erl

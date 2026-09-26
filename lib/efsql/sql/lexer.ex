@@ -73,7 +73,7 @@ defmodule Efsql.SQL.Lexer do
   defp lex(<<c, rest::binary>>, line, col, acc) when c in [?\s, ?\t, ?\f, ?\v],
     do: lex(rest, line, col + 1, acc)
 
-  defp lex(<<"--", rest::binary>>, line, _col, acc), do: line_comment(rest, line, acc)
+  defp lex(<<"--", rest::binary>>, line, col, acc), do: line_comment(rest, line, col + 2, acc)
 
   defp lex(<<"/*", rest::binary>>, line, col, acc),
     do: block_comment(rest, line, col + 2, 1, {line, col}, acc)
@@ -139,13 +139,17 @@ defmodule Efsql.SQL.Lexer do
 
   # -- comments --
 
-  defp line_comment(<<>>, line, acc), do: lex(<<>>, line, 1, acc)
-  defp line_comment(<<?\r, ?\n, rest::binary>>, line, acc), do: lex(rest, line + 1, 1, acc)
+  defp line_comment(<<>>, line, col, acc), do: lex(<<>>, line, col, acc)
+  defp line_comment(<<?\r, ?\n, rest::binary>>, line, _col, acc), do: lex(rest, line + 1, 1, acc)
 
-  defp line_comment(<<c, rest::binary>>, line, acc) when c in [?\n, ?\r],
+  defp line_comment(<<c, rest::binary>>, line, _col, acc) when c in [?\n, ?\r],
     do: lex(rest, line + 1, 1, acc)
 
-  defp line_comment(<<_, rest::binary>>, line, acc), do: line_comment(rest, line, acc)
+  defp line_comment(<<_::utf8, rest::binary>>, line, col, acc),
+    do: line_comment(rest, line, col + 1, acc)
+
+  defp line_comment(<<_, rest::binary>>, line, col, acc),
+    do: line_comment(rest, line, col + 1, acc)
 
   defp block_comment(<<>>, _line, _col, _depth, start, _acc),
     do: throw({:syntax_error, "unterminated /* comment", start})

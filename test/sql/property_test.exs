@@ -1,52 +1,47 @@
 defmodule Efsql.SQL.PropertyTest do
-  # Randomized tests. `:rand` is seeded per test from ExUnit's --seed, so a
-  # failure reproduces with `mix test --seed N`.
-  use ExUnit.Case, async: true
+  # Randomized tests, run against both parsers. `:rand` is seeded per test
+  # from ExUnit's --seed, so a failure reproduces with `mix test --seed N`.
+  use ExUnit.Case,
+    async: true,
+    parameterize: [%{parser: Efsql.SQL.Parser}, %{parser: Efsql.SQL.Yecc}]
 
   alias Efsql.Exception.Unsupported
   alias Efsql.SQL.AST.Select
-  alias Efsql.SQL.Parser
   alias Efsql.SQL.SyntaxError
   alias EfsqlTest.SQLGen
 
   @runs 1_000
 
-  test "printing a random tree and parsing it gives the tree back" do
+  test "printing a random tree and parsing it gives the tree back", %{parser: parser} do
     for _ <- 1..@runs do
       select = SQLGen.select()
       sql = SQLGen.to_sql(select)
 
-      assert Parser.parse(sql) == {:ok, select}, """
+      assert parser.parse(sql) == {:ok, select}, """
       SQL:
       #{sql}
       """
     end
   end
 
-  test "mangled queries parse or fail with a positioned SyntaxError, never crash" do
+  test "mangled queries parse or fail with a positioned SyntaxError, never crash",
+       %{parser: parser} do
     for _ <- 1..@runs do
-      sql = SQLGen.select() |> SQLGen.to_sql() |> mangle(Enum.random(1..4))
-      check(sql)
+      check(parser, SQLGen.select() |> SQLGen.to_sql() |> SQLGen.mangle(Enum.random(1..4)))
     end
   end
 
-  test "random bytes parse or fail with a positioned SyntaxError, never crash" do
-    alphabet =
-      String.graphemes("selctfromwhandi*,.;()'\"=<>!:-+/%_ \n\t0123456789eé") ++
-        ["select ", " from ", " where ", " and ", "--", "/*", "*/", "::", <<0xFF>>, <<0>>]
-
-    for _ <- 1..@runs do
-      sql = Enum.map_join(1..Enum.random(0..40)//1, fn _ -> Enum.random(alphabet) end)
-      check(sql)
-    end
+  test "random bytes parse or fail with a positioned SyntaxError, never crash",
+       %{parser: parser} do
+    for _ <- 1..@runs, do: check(parser, SQLGen.garbage())
   end
 
-  test "valid queries translate to a logical plan or raise Unsupported" do
+  test "valid queries translate to a logical plan or raise Unsupported", %{parser: parser} do
     for _ <- 1..@runs do
-      sql = SQLGen.select() |> SQLGen.to_sql()
+      {:ok, select} = parser.parse(SQLGen.select() |> SQLGen.to_sql())
 
       try do
-        Efsql.Parser.sql_to_logical(sql)
+        Efsql.Parser.to_logical(select)
       rescue
         _ in [Unsupported] ->
           :ok
@@ -59,20 +54,20 @@ defmodule Efsql.SQL.PropertyTest do
     end
   end
 
-  test "big inputs parse and translate quickly" do
+  test "big inputs parse and translate quickly", %{parser: parser} do
     values = Enum.map_join(1..20_000, ", ", &"'v#{&1}'")
     conditions = Enum.map_join(1..20_000, " and ", &"f#{&1} = #{&1}")
     sql = "select a from t where a in (#{values}) and #{conditions}"
 
     {micros, %Efsql.Logical.Select{predicates: predicates}} =
-      :timer.tc(fn -> Efsql.Parser.sql_to_logical(sql) end)
+      :timer.tc(fn -> sql |> parser.parse!() |> Efsql.Parser.to_logical() end)
 
     assert length(predicates) == 20_001
     assert micros < 5_000_000
   end
 
-  defp check(sql) do
-    case Parser.parse(sql) do
+  defp check(parser, sql) do
+    case parser.parse(sql) do
       {:ok, %Select{}} ->
         :ok
 
@@ -82,45 +77,5 @@ defmodule Efsql.SQL.PropertyTest do
         assert line in 1..length(lines), "line #{line} out of range for #{inspect(sql)}"
         assert column >= 1, "column #{column} for #{inspect(sql)}"
     end
-  end
-
-  # Random edits: delete, insert, replace, duplicate or truncate.
-  defp mangle(sql, 0), do: sql
-
-  defp mangle(sql, n) do
-    chars = String.graphemes(sql)
-    size = length(chars)
-    at = Enum.random(0..size)
-
-    junk =
-      Enum.random([
-        "(",
-        ")",
-        "'",
-        "\"",
-        ",",
-        ";",
-        "-",
-        "*",
-        ":",
-        ".",
-        "=",
-        "<",
-        "not",
-        " and ",
-        "é",
-        <<0xC3>>
-      ])
-
-    chars =
-      case Enum.random(1..5) do
-        1 -> List.delete_at(chars, at)
-        2 -> List.insert_at(chars, at, junk)
-        3 -> List.replace_at(chars, at, junk)
-        4 -> Enum.take(chars, at) ++ Enum.slice(chars, at, 10) ++ Enum.drop(chars, at)
-        5 -> Enum.take(chars, at)
-      end
-
-    mangle(Enum.join(chars), n - 1)
   end
 end

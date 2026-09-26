@@ -226,6 +226,85 @@ defmodule EfsqlTest.SQLGen do
     end
   end
 
+  # -- broken input --
+
+  @junk [
+    "(",
+    ")",
+    "'",
+    "\"",
+    ",",
+    ";",
+    "-",
+    "+",
+    "*",
+    ":",
+    "::",
+    ".",
+    "=",
+    "<",
+    "not",
+    " and ",
+    " or ",
+    " is ",
+    " in ",
+    " between ",
+    "é",
+    <<0xC3>>,
+    " select ",
+    " x ",
+    "1",
+    " -- c\n",
+    "/*",
+    "*/",
+    " timestamp ",
+    " with ",
+    " time ",
+    " zone ",
+    " cast ",
+    " as ",
+    " order ",
+    " by ",
+    " limit ",
+    " desc ",
+    " nulls "
+  ]
+
+  @doc "`n` random edits to `sql`: deletes, inserts, replacements, duplications, truncation."
+  def mangle(sql, 0), do: sql
+
+  def mangle(sql, n) do
+    chars = String.graphemes(sql)
+    at = Enum.random(0..length(chars))
+    junk = Enum.random(@junk)
+
+    chars =
+      case Enum.random(1..5) do
+        1 -> List.delete_at(chars, at)
+        2 -> List.insert_at(chars, at, junk)
+        3 -> List.replace_at(chars, at, junk)
+        4 -> Enum.take(chars, at) ++ Enum.slice(chars, at, 10) ++ Enum.drop(chars, at)
+        5 -> Enum.take(chars, at)
+      end
+
+    mangle(Enum.join(chars), n - 1)
+  end
+
+  @alphabet String.graphemes("selctfromwhandi*,.;()'\"=<>!:-+/%_ \n\t0123456789eé") ++
+              ["select ", " from ", " where ", " and ", "--", "/*", "*/", "::", <<0xFF>>, <<0>>]
+
+  @doc "Up to 40 random SQL-ish fragments and bytes, invalid UTF-8 included."
+  def garbage(), do: random_string(@alphabet, 0..40)
+
+  @doc "A valid query, a mangled one, or garbage, in equal measure."
+  def any_input() do
+    case Enum.random(1..3) do
+      1 -> select() |> to_sql()
+      2 -> select() |> to_sql() |> mangle(Enum.random(1..4))
+      3 -> garbage()
+    end
+  end
+
   # -- helpers --
 
   defp random_string(pool, range) do
