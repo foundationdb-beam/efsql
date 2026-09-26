@@ -281,6 +281,36 @@ defmodule Efsql.ParserTest do
       end
     end
 
+    # The SQL library hangs or misparses on these without the token
+    # rewrite in Efsql.Parser.parse/1.
+    test "columns named after reserved words" do
+      assert %Logical.Select{predicates: [{:cmp, :==, :day, "x"}]} =
+               parse("select id from t.users where day = 'x';")
+
+      assert %Logical.Select{predicates: [{:cmp, :==, :x, "a"}, {:cmp, :>=, :at, 1}]} =
+               parse("select id from t.users where x = 'a' and at >= 1;")
+
+      assert %Logical.Select{
+               predicates: [
+                 {:in, :day, ["a"]},
+                 {:like, :user, "a%"},
+                 {:not_like, :value, "b%"},
+                 {:range, :year, {:>=, 1}, {:<=, 2}}
+               ]
+             } =
+               parse(
+                 "select id from t.users where day in ('a') and user like 'a%' and value not like 'b%' and year between 1 and 2;"
+               )
+
+      assert %Logical.Select{predicates: [{:is_null, :day}, {:not_null, :at}]} =
+               parse("select id from t.users where day is null and at is not null;")
+    end
+
+    test "reserved-word columns keep their sort direction" do
+      assert %Logical.Select{order: [desc: :day, asc: :user]} =
+               parse("select id from t.users order by day desc, user asc;")
+    end
+
     test "versionstamp partition scan value" do
       assert %Logical.Select{predicates: [{:cmp, :==, :_, {"p", :*}}]} =
                parse("select id from t.users where _ = ('p', *);")

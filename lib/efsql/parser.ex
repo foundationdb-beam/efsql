@@ -11,6 +11,12 @@ defmodule Efsql.Parser do
 
   @comparison_ops ~w[= >= <= > <]a
 
+  # Tokens that follow a column: an unquoted column named after a reserved
+  # word (day, at, date, user, ...) is recognised by its position here.
+  @column_followers ~w[= != <> < > <= >= in like ilike between is not asc desc]a
+  # Reserved words that can themselves precede one of those tokens.
+  @not_columns ~w[true false null unknown end case when then else where having on select is]a
+
   @doc """
   Lexes and parses SQL text into the SQL library's parse tree, as
   `{:ok, context, parsed}`. Use this rather than calling the library
@@ -26,6 +32,11 @@ defmodule Efsql.Parser do
     to_logical(parsed)
   end
 
+  # The library lexes a reserved word as its own token even where it names
+  # a column, and then misparses the predicate or never returns from
+  # `where day = 'x'`. A reserved word right before a column follower is
+  # a column: rewrite it to the identifier the library expects.
+  #
   # The library assembles `x is null` into a node that composes with `and`,
   # but leaves `x is not null` as loose tokens, and never returns from
   # `... and x is not null`; its postfix `isnull`/`notnull` nodes hang the
@@ -34,13 +45,23 @@ defmodule Efsql.Parser do
   # the library matches the leading meta entries by position. Lexer tokens
   # are in reverse order.
   defp normalize_tokens([{:null, _, []} = null, {:not, _, []}, {:is, meta, []} | rest]) do
-    [null, {:is, meta ++ [efsql_not_null: true], []} | normalize_tokens(rest)]
+    [null | normalize_tokens([{:is, meta ++ [efsql_not_null: true], []} | rest])]
   end
 
   defp normalize_tokens([{tag, meta, []} | rest]) when tag in ~w[isnull notnull]a do
     is_meta = List.keyreplace(meta, :type, 0, {:type, :operator})
     is_meta = if tag == :notnull, do: is_meta ++ [efsql_not_null: true], else: is_meta
-    [{:null, meta, []}, {:is, is_meta, []} | normalize_tokens(rest)]
+    [{:null, meta, []} | normalize_tokens([{:is, is_meta, []} | rest])]
+  end
+
+  defp normalize_tokens([{follower, _, _} = token, {word, meta, []} | rest])
+       when follower in @column_followers and word not in @not_columns do
+    if meta[:type] == :reserved do
+      ident = {:ident, List.keyreplace(meta, :type, 0, {:type, :literal}), Atom.to_charlist(word)}
+      [token | normalize_tokens([ident | rest])]
+    else
+      [token | normalize_tokens([{word, meta, []} | rest])]
+    end
   end
 
   defp normalize_tokens([{tag, meta, data} | rest]) when tag in ~w[paren bracket brace]a do
