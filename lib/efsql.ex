@@ -14,8 +14,6 @@ defmodule Efsql do
 
   import Ecto.Query
 
-  def lex_and_parse(sql), do: Efsql.Parser.parse(sql)
-
   def hello() do
     tenant = EctoFoundationDB.Tenant.open!(Efsql.Repo, "localhost")
 

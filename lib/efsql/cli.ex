@@ -283,7 +283,9 @@ defmodule Efsql.Cli do
     |> then(&"async union (#{length(nodes)}):\n#{&1}")
   end
 
-  defp print_error(term) do
-    Owl.IO.puts(Owl.Data.tag(inspect(term), :red))
-  end
+  defp print_error(%{__exception__: true} = e),
+    do: Owl.IO.puts(Owl.Data.tag(Exception.message(e), :red))
+
+  defp print_error(term) when is_binary(term), do: Owl.IO.puts(Owl.Data.tag(term, :red))
+  defp print_error(term), do: Owl.IO.puts(Owl.Data.tag(inspect(term), :red))
 end

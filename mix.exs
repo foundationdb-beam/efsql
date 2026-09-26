@@ -31,12 +31,7 @@ defmodule Efsql.MixProject do
   def application do
     [
       mod: {Efsql.Application, []},
-      extra_applications: [:logger],
-      # efsql uses only sql's lexer and parser, which need no running
-      # process. Including the app loads its code without starting its
-      # database client runtime (a :dets file in its priv dir, a startup
-      # sleep, and a stop/1 that crashes when no pool ever started).
-      included_applications: [:sql]
+      extra_applications: [:logger]
     ]
   end
 
@@ -47,7 +42,6 @@ defmodule Efsql.MixProject do
       # advance them together.
       {:ecto, "~> 3.13.0"},
       {:ex_fdbmonitor, github: "foundationdb-beam/ex_fdbmonitor", only: :dev, runtime: false},
-      {:sql, github: "elixir-dbvisor/sql"},
       {:owl, "~> 0.13"}
     ]
   end
