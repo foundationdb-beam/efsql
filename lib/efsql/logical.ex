@@ -14,6 +14,12 @@ defmodule Efsql.Logical do
 
   The primary key is the pseudo-field `:_`.
 
+  A grouped query (`GROUP BY`, or any aggregate) has `group_by` set to its
+  key fields (`[]` for one group over every row) and `aggregates` to
+  `{output_name, function, field | :star}`, `function` one of `:count`,
+  `:sum`, `:min`, `:max`, `:avg`. Its `projection` and `order` then name
+  output columns: group fields and aggregate names.
+
   `Efsql.Rewrite` normalizes a logical query, `Efsql.Planner` turns it into
   an `Efsql.Physical.Plan`.
   """
@@ -29,7 +35,11 @@ defmodule Efsql.Logical do
               predicates: [],
               # [{:asc | :desc, field}]
               order: [],
-              limit: nil
+              limit: nil,
+              # nil, or the GROUP BY fields of a grouped query
+              group_by: nil,
+              # [{output_name :: atom, function :: atom, field :: atom | :star}]
+              aggregates: []
   end
 
   def predicate_field({:cmp, _op, field, _value}), do: field

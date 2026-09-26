@@ -59,6 +59,16 @@ defmodule Efsql.CompleteTest do
 
   test "order by offers fields" do
     assert {_, ["by"]} = Complete.complete("select id from users order ", @context)
+    assert {_, ["by"]} = Complete.complete("select id from users group ", @context)
+
+    {_, candidates} = Complete.complete("select id from users group by ", @context)
+    assert "name" in candidates
+
+    assert {_, ["order", "limit"]} =
+             Complete.complete("select name from users group by name ", @context)
+
+    {_, candidates} = Complete.complete("select id from users ", @context)
+    assert "group" in candidates
     {_, candidates} = Complete.complete("select id from users order by ", @context)
     assert "name" in candidates
   end

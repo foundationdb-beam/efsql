@@ -171,7 +171,8 @@ so if you forget.
 
 Comments (`-- ...` and `/* ... */`) can go anywhere. A syntax error reports the
 line and column it was found at, and features efsql doesn't support (`OR`,
-`NOT`, `<>`, joins, functions, `GROUP BY`) are rejected by name.
+`NOT`, `<>`, joins, `HAVING`, functions other than aggregates) are rejected by
+name.
 
 ### Storage IDs
 
@@ -302,6 +303,29 @@ Typed literals work anywhere a value does, including `IN` and `BETWEEN`:
 ```sql
 select col_a from tenant_id.table_name where inserted_at between '2024-01-01'::timestamp and '2025-01-01'::timestamp;
 ```
+
+### Group and aggregate
+
+```sql
+-- one row for the whole table
+select count(*) from tenant_id.table_name;
+select min(inserted_at), max(inserted_at) from tenant_id.table_name where status = 'paid';
+
+-- one row per group
+select status, count(*) as n, sum(total) from tenant_id.table_name group by status;
+select status, avg(total) from tenant_id.table_name group by status order by avg(total) desc limit 3;
+```
+
+The aggregates are `count(*)`, `count(field)`, `sum`, `min`, `max` and
+`avg`, and `AS` names one. As in SQL, `count(*)` counts rows while every
+other aggregate skips NULLs, and NULLs form one group. `sum` and `avg` take
+numbers and `Decimal`s; `min` and `max` also work on strings and datetimes.
+
+A selected field must be in `GROUP BY`. `ORDER BY` can name a group field,
+an aggregate or its alias, and `LIMIT` limits the groups. `WHERE` is applied
+before grouping and gets the usual index and primary key pushdown; the
+grouping itself happens after the rows are read. `HAVING` is not supported
+yet.
 
 ### Limit
 

@@ -95,12 +95,14 @@ defmodule Efsql.SQL.ParserTest do
 
     test "unsupported shapes say what is unsupported" do
       assert reason("select distinct a from t") == "DISTINCT is not supported"
-      assert reason("select count(a) from t") == "functions are not supported"
       assert reason("select t.a from t") == "qualified column names are not supported"
     end
 
     test "a missing FROM" do
-      assert %SyntaxError{reason: "expected FROM or ',', got the end of the statement", column: 9} =
+      assert %SyntaxError{
+               reason: "expected FROM, '(' or ',', got the end of the statement",
+               column: 9
+             } =
                error("select a")
     end
   end
@@ -346,6 +348,50 @@ defmodule Efsql.SQL.ParserTest do
     end
   end
 
+  describe "GROUP BY and aggregates" do
+    test "aggregates in the select list, with or without an alias" do
+      assert %Select{
+               fields: [
+                 "a",
+                 {:aggregate, "count", :star, nil},
+                 {:aggregate, "sum", "price", "total"}
+               ],
+               group_by: ["a"]
+             } = parse("select a, COUNT(*), Sum(price) as total from t group by a")
+    end
+
+    test "any function name parses; the translator checks it" do
+      assert %Select{fields: [{:aggregate, "lower", "a", nil}]} = parse("select lower(a) from t")
+    end
+
+    test "GROUP BY lists names and comes between WHERE and ORDER BY" do
+      assert %Select{where: {:compare, :=, _, _}, group_by: ["a", "b"], order_by: [{"a", :asc}]} =
+               parse("select a, b from t where c = 1 group by a, b order by a limit 5")
+    end
+
+    test "ORDER BY takes an aggregate" do
+      assert %Select{order_by: [{{:aggregate, "count", :star, nil}, :desc}, {"a", :asc}]} =
+               parse("select a from t group by a order by count(*) desc, a")
+    end
+
+    test "errors" do
+      assert reason("select * from t group a") == "expected BY, got 'a'"
+      assert reason("select * from t group by") == "expected a name, got the end of the statement"
+      assert reason("select count() from t") == "expected a name or '*', got ')'"
+      assert reason("select count(a from t") == "expected ')', got 'from'"
+      assert reason("select count(*) as from t") =~ "expected a name, got the keyword 'from'"
+
+      assert reason("select a from t order by a group by a") ==
+               "expected the end of the statement, got 'group'"
+
+      assert reason("select a from t where count(*) > 1") ==
+               "functions are only supported as aggregates, in the select list and ORDER BY"
+
+      assert reason("select a from t group by a having count(*) > 1") ==
+               "HAVING is not supported"
+    end
+  end
+
   describe "ORDER BY and LIMIT" do
     test "directions default to ascending" do
       assert %Select{order_by: [{"a", :asc}, {"b", :desc}, {"c", :asc}]} =
@@ -396,8 +442,6 @@ defmodule Efsql.SQL.ParserTest do
     end
 
     test "unsupported clauses are named" do
-      assert reason("select * from t group by a") == "GROUP BY is not supported"
-
       assert reason("select * from t where a = 1 having a > 1") ==
                "HAVING is not supported"
 

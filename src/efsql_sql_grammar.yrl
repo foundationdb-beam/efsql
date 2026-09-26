@@ -1,7 +1,11 @@
 %% Grammar for efsql's SQL dialect. Efsql.SQL.Parser drives it with
 %% tokens from Efsql.SQL.Lexer:
 %%
-%%   SELECT fields FROM name [WHERE expr] [ORDER BY items] [LIMIT n] [;]
+%%   SELECT items FROM name [WHERE expr] [GROUP BY names] [ORDER BY items]
+%%     [LIMIT n] [;]
+%%
+%% A select item is a name or an aggregate call, `count(*)` or `sum(price)`,
+%% optionally `AS alias`; which functions exist is Efsql.Parser's business.
 %%
 %% A token is {Category, Index, Value}, where Index is its place in the
 %% token list, so an error names its token exactly. Words in the reserved
@@ -17,7 +21,8 @@
 %% struct.
 
 Nonterminals
-statement select_stmt fields field_list table where_clause order_clause order_items order_item limit_clause
+statement select_stmt fields field_list field table where_clause group_clause names
+order_clause order_items order_item order_key aggregate limit_clause
 expr or_expr and_expr not_expr predicate operand primary name
 type_name type_word keyword element elements expr_list comparison.
 
@@ -37,14 +42,21 @@ Endsymbol '$end'.
 statement -> select_stmt : '$1'.
 statement -> select_stmt ';' : '$1'.
 
-select_stmt -> 'select' fields 'from' table where_clause order_clause limit_clause :
-  {select, '$2', '$4', '$5', '$6', '$7'}.
+select_stmt -> 'select' fields 'from' table where_clause group_clause order_clause limit_clause :
+  {select, '$2', '$4', '$5', '$6', '$7', '$8'}.
 
 fields -> '*' : star.
 fields -> field_list : '$1'.
 
-field_list -> name : ['$1'].
-field_list -> name ',' field_list : ['$1' | '$3'].
+field_list -> field : ['$1'].
+field_list -> field ',' field_list : ['$1' | '$3'].
+
+field -> name : '$1'.
+field -> aggregate : '$1'.
+field -> aggregate 'as' name : setelement(4, '$1', '$3').
+
+aggregate -> ident '(' '*' ')' : {aggregate, value('$1'), star, nil}.
+aggregate -> ident '(' name ')' : {aggregate, value('$1'), '$3', nil}.
 
 table -> name : ['$1'].
 table -> name '.' name : ['$1', '$3'].
@@ -53,15 +65,24 @@ table -> name '.' name '.' name : ['$1', '$3', '$5'].
 where_clause -> '$empty' : nil.
 where_clause -> 'where' expr : '$2'.
 
+group_clause -> '$empty' : [].
+group_clause -> 'group' 'by' names : '$3'.
+
+names -> name : ['$1'].
+names -> name ',' names : ['$1' | '$3'].
+
 order_clause -> '$empty' : [].
 order_clause -> 'order' 'by' order_items : '$3'.
 
 order_items -> order_item : ['$1'].
 order_items -> order_item ',' order_items : ['$1' | '$3'].
 
-order_item -> name : {'$1', asc}.
-order_item -> name 'asc' : {'$1', asc}.
-order_item -> name 'desc' : {'$1', desc}.
+order_item -> order_key : {'$1', asc}.
+order_item -> order_key 'asc' : {'$1', asc}.
+order_item -> order_key 'desc' : {'$1', desc}.
+
+order_key -> name : '$1'.
+order_key -> aggregate : '$1'.
 
 limit_clause -> '$empty' : nil.
 limit_clause -> 'limit' integer : value('$2').

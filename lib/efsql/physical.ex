@@ -18,6 +18,8 @@ defmodule Efsql.Physical do
   Operators:
 
     * `{:filter, [predicate]}` — `Efsql.Logical` predicates, SQL NULL semantics
+    * `{:aggregate, group_by, aggregates}` — one row per group, see
+      `Efsql.Aggregate`
     * `{:sort, [{:asc | :desc, field}]}` — NULLs last ascending, first descending
     * `{:limit, n}`
     * `{:project, [field]}` — trim rows to the requested fields

@@ -64,6 +64,10 @@ defmodule Efsql.Executor do
     Enum.filter(rows, fn row -> Enum.all?(predicates, &eval(&1, row)) end)
   end
 
+  defp apply_op({:aggregate, group_by, aggregates}, rows) do
+    Efsql.Aggregate.run(rows, group_by, aggregates)
+  end
+
   defp apply_op({:sort, sort}, rows) do
     Enum.sort(rows, fn a, b -> compare(a, b, sort) != :gt end)
   end

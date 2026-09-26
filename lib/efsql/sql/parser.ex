@@ -2,7 +2,11 @@ defmodule Efsql.SQL.Parser do
   @moduledoc """
   Parses one `SELECT` statement into an `Efsql.SQL.AST.Select`.
 
-      SELECT fields FROM name [WHERE expr] [ORDER BY items] [LIMIT n] [;]
+      SELECT items FROM name [WHERE expr] [GROUP BY names] [ORDER BY items]
+        [LIMIT n] [;]
+
+  An item is a name or an aggregate call, `count(*)` or `sum(price)`,
+  optionally named with `AS alias`.
 
   The grammar is `src/efsql_sql_grammar.yrl`, compiled by yecc; this
   module feeds it `Efsql.SQL.Lexer` tokens and explains its errors.
@@ -22,7 +26,7 @@ defmodule Efsql.SQL.Parser do
   turn and keeps those the grammar accepts, so messages follow the
   grammar with no upkeep: `expected BY, got the end of the statement`.
   A few hints on top name features that aren't supported yet, such as
-  `GROUP BY` or functions; drop a hint when its feature lands.
+  `HAVING` or joins; drop a hint when its feature lands.
   """
 
   alias Efsql.SQL.AST
@@ -56,7 +60,6 @@ defmodule Efsql.SQL.Parser do
   @not_select ~w[insert update delete create drop alter truncate grant revoke explain]
   @unsupported %{
     "distinct" => "DISTINCT",
-    "group" => "GROUP BY",
     "having" => "HAVING",
     "offset" => "OFFSET",
     "join" => "JOIN",
@@ -72,6 +75,9 @@ defmodule Efsql.SQL.Parser do
     "fetch" => "FETCH"
   }
 
+  @functions_only_aggregates "functions are only supported as aggregates, " <>
+                               "in the select list and ORDER BY"
+
   def reserved_words, do: @reserved
 
   @spec parse(String.t()) :: {:ok, AST.Select.t()} | {:error, SyntaxError.t()}
@@ -80,9 +86,16 @@ defmodule Efsql.SQL.Parser do
       grammar_tokens = tokens |> Enum.with_index() |> Enum.map(&to_grammar/1)
 
       case :efsql_sql_grammar.parse(grammar_tokens) do
-        {:ok, {:select, fields, from, where, order_by, limit}} ->
+        {:ok, {:select, fields, from, where, group_by, order_by, limit}} ->
           {:ok,
-           %AST.Select{fields: fields, from: from, where: where, order_by: order_by, limit: limit}}
+           %AST.Select{
+             fields: fields,
+             from: from,
+             where: where,
+             group_by: group_by,
+             order_by: order_by,
+             limit: limit
+           }}
 
         {:error, {at, :efsql_sql_grammar, _}} ->
           tokens = List.to_tuple(tokens)
@@ -183,9 +196,9 @@ defmodule Efsql.SQL.Parser do
   defp hint({:word, "fetch", _}, _, _, _), do: "FETCH is not supported"
 
   defp hint({:op, :"(", _}, {:word, word, _}, _, _) when word not in @keywords,
-    do: "functions are not supported"
+    do: @functions_only_aggregates
 
-  defp hint({:op, :"(", _}, {:quoted, _, _}, _, _), do: "functions are not supported"
+  defp hint({:op, :"(", _}, {:quoted, _, _}, _, _), do: @functions_only_aggregates
 
   defp hint({:op, :., _}, {type, _, _}, _, _) when type in [:word, :quoted],
     do: "qualified column names are not supported"

@@ -3,7 +3,9 @@ defmodule EfsqlTest.SQLGen do
   # Random `Efsql.SQL.AST.Select` trees, and a printer that renders one as
   # SQL text with randomized spelling: keyword case, whitespace and
   # comments between tokens, optional quoting, `!=` for `<>`, `CAST(...)`
-  # for `::`, `ISNULL` for `IS NULL`. Parsing the text must give back the
+  # for `::`, `ISNULL` for `IS NULL`. Trees include aggregates and GROUP BY
+  # whatever their meaning (`select a, lower(*)`), since the parser takes
+  # any function name. Parsing the text must give back the
   # tree. Uses `:rand`, which ExUnit seeds per test from `--seed`.
 
   alias Efsql.SQL.AST.Select
@@ -17,15 +19,26 @@ defmodule EfsqlTest.SQLGen do
 
   def select() do
     %Select{
-      fields: if(one_in(4), do: :star, else: list(1..4, &name/0)),
+      fields: if(one_in(4), do: :star, else: list(1..4, &field/0)),
       from: list(1..3, &name/0),
       where: maybe(fn -> expr(3) end),
-      order_by: list(0..3, fn -> {name(), Enum.random([:asc, :desc])} end),
+      group_by: if(one_in(3), do: list(1..3, &name/0), else: []),
+      order_by: list(0..3, fn -> {order_key(), Enum.random([:asc, :desc])} end),
       limit: maybe(fn -> Enum.random([0, 1, 15, 1000, 123_456_789]) end)
     }
   end
 
   # -- trees --
+
+  # Function names must lex as plain words that aren't keywords.
+  @functions ~w[count sum min max avg lower]
+
+  defp field(), do: if(one_in(3), do: aggregate(maybe(&name/0)), else: name())
+  defp order_key(), do: if(one_in(4), do: aggregate(nil), else: name())
+
+  defp aggregate(alias) do
+    {:aggregate, Enum.random(@functions), if(one_in(3), do: :star, else: name()), alias}
+  end
 
   def expr(0), do: predicate()
 
@@ -90,6 +103,7 @@ defmodule EfsqlTest.SQLGen do
       kw("from"),
       Enum.intersperse(Enum.map(select.from, &print_name/1), p(".")),
       if(select.where, do: [kw("where"), print(select.where)], else: []),
+      group_by(select.group_by),
       order_by(select.order_by),
       if(select.limit, do: [kw("limit"), w(Integer.to_string(select.limit))], else: []),
       if(one_in(2), do: [p(";")], else: [])
@@ -99,7 +113,20 @@ defmodule EfsqlTest.SQLGen do
   end
 
   defp fields(:star), do: [p("*")]
-  defp fields(names), do: comma(Enum.map(names, &print_name/1))
+  defp fields(items), do: comma(Enum.map(items, &print_field/1))
+
+  defp print_field({:aggregate, _, _, nil} = call), do: print_aggregate(call)
+
+  defp print_field({:aggregate, _, _, alias} = call),
+    do: [print_aggregate(call), kw("as"), print_name(alias)]
+
+  defp print_field(name), do: print_name(name)
+
+  defp print_aggregate({:aggregate, function, arg, _alias}),
+    do: [kw(function), p("("), if(arg == :star, do: p("*"), else: print_name(arg)), p(")")]
+
+  defp group_by([]), do: []
+  defp group_by(names), do: [kw("group"), kw("by"), comma(Enum.map(names, &print_name/1))]
 
   defp order_by([]), do: []
 
@@ -109,8 +136,8 @@ defmodule EfsqlTest.SQLGen do
       kw("by"),
       comma(
         Enum.map(items, fn
-          {name, :asc} -> [print_name(name) | Enum.random([[], [kw("asc")]])]
-          {name, :desc} -> [print_name(name), kw("desc")]
+          {key, :asc} -> [print_field(key) | Enum.random([[], [kw("asc")]])]
+          {key, :desc} -> [print_field(key), kw("desc")]
         end)
       )
     ]

@@ -13,7 +13,7 @@ defmodule Efsql.Complete do
   """
 
   @statement_start ~w(select)
-  @post_expr ~w(and order limit)
+  @post_expr ~w(and group order limit)
   @operators ~w(= > >= < <= like in between not is)
 
   def complete(input, context) do
@@ -53,14 +53,14 @@ defmodule Efsql.Complete do
       last in ["where", "and", "not"] ->
         fields(context, tokens)
 
-      last == "order" ->
+      last in ["order", "group"] ->
         ~w(by)
 
       last == "by" ->
         fields(context, tokens)
 
       last in ["asc", "desc"] ->
-        @post_expr -- ["order"]
+        ~w(limit)
 
       last in @operators ->
         []
@@ -69,8 +69,9 @@ defmodule Efsql.Complete do
       true ->
         case section(tokens) do
           :select -> ~w(from)
-          :from -> ~w(where order limit)
+          :from -> ~w(where group order limit)
           :where -> @operators
+          :group_by -> ~w(order limit)
           :order_by -> ~w(asc desc limit)
           _ -> []
         end
@@ -95,11 +96,13 @@ defmodule Efsql.Complete do
   defp section(tokens) do
     tokens
     |> Enum.reverse()
+    |> Enum.chunk_every(2, 1)
     |> Enum.find_value(:start, fn
-      "by" -> :order_by
-      "where" -> :where
-      "from" -> :from
-      "select" -> :select
+      ["by", "group"] -> :group_by
+      ["by" | _] -> :order_by
+      ["where" | _] -> :where
+      ["from" | _] -> :from
+      ["select" | _] -> :select
       _ -> nil
     end)
   end

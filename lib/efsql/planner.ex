@@ -17,6 +17,10 @@ defmodule Efsql.Planner do
   `select *` behaves like any field list: index-constrained queries are
   served by `Repo.all_from_source` (full data objects, no Ecto select
   required), pk constraints by `Repo.all_range`.
+
+  A grouped query is planned as the plain query that pulls the fields its
+  groups and aggregates read, so `WHERE` gets the same pushdown; grouping,
+  ordering and the limit then run on the pulled rows.
   """
 
   alias Efsql.Exception.Unsupported
@@ -26,6 +30,39 @@ defmodule Efsql.Planner do
   alias EctoFoundationDB.Layer.Metadata
 
   @pk_field :_
+
+  def plan(%Logical.Select{group_by: group_by} = logical, options) when is_list(group_by) do
+    %Logical.Select{aggregates: aggregates, order: order, limit: limit} = logical
+
+    read = Enum.uniq(group_by ++ for({_name, _fun, f} <- aggregates, f != :star, do: f))
+
+    %Plan{} =
+      plan =
+      plan(
+        %Logical.Select{
+          logical
+          | projection: if(read == [], do: :star, else: read),
+            order: [],
+            limit: nil,
+            group_by: nil,
+            aggregates: []
+        },
+        options
+      )
+
+    columns = group_by ++ Enum.map(aggregates, &elem(&1, 0))
+
+    ops =
+      [{:aggregate, group_by, aggregates}]
+      |> append_if(order != [], {:sort, order})
+      |> append_if(limit != nil, {:limit, limit})
+      |> append_if(
+        Enum.sort(columns) != Enum.sort(logical.projection),
+        {:project, logical.projection}
+      )
+
+    %Plan{plan | ops: plan.ops ++ ops}
+  end
 
   def plan(%Logical.Select{} = logical, options) do
     %Logical.Select{predicates: preds, order: sort, projection: projection} = logical
@@ -62,6 +99,9 @@ defmodule Efsql.Planner do
   A plain Ecto query with every predicate as a where clause, for callers
   that hand the query to the adapter unplanned (e.g. `Repo.stream`).
   """
+  def to_ecto_query(%Logical.Select{group_by: group_by}) when is_list(group_by),
+    do: raise(Unsupported, "GROUP BY and aggregates can't be streamed")
+
   def to_ecto_query(%Logical.Select{} = logical) do
     take = if logical.projection == :star, do: nil, else: logical.projection
 
