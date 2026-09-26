@@ -4,28 +4,58 @@ defmodule Efsql.SQL.Parser do
 
       SELECT fields FROM name [WHERE expr] [ORDER BY items] [LIMIT n] [;]
 
-  A recursive-descent parser over `Efsql.SQL.Lexer` tokens. Keywords are
-  recognised by position, so a word is only a keyword where the grammar
-  expects one. The reserved words below can't be bare names anywhere,
-  because a name could be mistaken for them; quote them to use them as
-  names (`"order"`). Everything else (`day`, `user`, `date`, `value`, ...)
-  is an ordinary name.
+  The grammar is `src/efsql_sql_grammar.yrl`, compiled by yecc; this
+  module feeds it `Efsql.SQL.Lexer` tokens and explains its errors.
+
+  The reserved words below can't be bare names, because a name could be
+  mistaken for them; quote them to use them as names (`"order"`).
+  Everything else (`day`, `user`, `date`, `value`, ...) is an ordinary
+  name, and any word, reserved or not, can be a type (`'x'::date`).
 
   Precedence, loosest first: `OR`, `AND`, `NOT`, then a predicate
   (comparison, `BETWEEN`, `IN`, `LIKE`, `IS NULL`), then `::` casts.
+
+  ## Errors
+
+  yecc only reports the token it stopped at. To say what it wanted
+  instead, the parser replays the tokens before it with each terminal in
+  turn and keeps those the grammar accepts, so messages follow the
+  grammar with no upkeep: `expected BY, got the end of the statement`.
+  A few hints on top name features that aren't supported yet, such as
+  `GROUP BY` or functions; drop a hint when its feature lands.
   """
 
   alias Efsql.SQL.AST
   alias Efsql.SQL.Lexer
   alias Efsql.SQL.SyntaxError
 
+  # These must match the grammar's keyword Terminals.
   @reserved ~w[all and as asc between by case cast cross desc distinct else end except
                false from full group having ilike in inner intersect is isnull join
                left like limit not notnull null offset on or order right select then
                true union when where with]
 
+  # Keywords that are also names.
+  @soft ~w[time timestamp without zone]
+
+  @keywords @reserved ++ @soft
+  @ops [:=, :<>, :<, :>, :<=, :>=, :"::", :"(", :")", :",", :., :";", :*, :+, :-]
+
+  # Every terminal of the grammar, plus the end of input: the candidates
+  # for "what could have come next".
+  @terminals [:ident, :quoted, :string, :integer, :float] ++
+               Enum.map(@keywords, &String.to_atom/1) ++ @ops ++ [:"$end"]
+
+  @name_starts [:ident, :quoted | Enum.map(@soft, &String.to_atom/1)]
+  @expression_starts @name_starts ++
+                       [:string, :integer, :float, :cast, true, false, :null, :"(", :+, :-]
+  @comparisons [:=, :<>, :<, :>, :<=, :>=]
+  @operators @comparisons ++
+               [:and, :or, :not, :between, :in, :like, :ilike, :is, :isnull, :notnull, :"::"]
+
   @not_select ~w[insert update delete create drop alter truncate grant revoke explain]
-  @unsupported_clauses %{
+  @unsupported %{
+    "distinct" => "DISTINCT",
     "group" => "GROUP BY",
     "having" => "HAVING",
     "offset" => "OFFSET",
@@ -36,25 +66,31 @@ defmodule Efsql.SQL.Parser do
     "full" => "JOIN",
     "cross" => "JOIN",
     "union" => "UNION",
+    "with" => "WITH",
     "intersect" => "INTERSECT",
     "except" => "EXCEPT",
     "fetch" => "FETCH"
   }
-
-  @comparison_ops [:=, :<>, :<, :>, :<=, :>=]
-  @arithmetic_ops [:+, :-, :*, :/, :%]
-  @max_depth 200
 
   def reserved_words, do: @reserved
 
   @spec parse(String.t()) :: {:ok, AST.Select.t()} | {:error, SyntaxError.t()}
   def parse(sql) when is_binary(sql) do
     with {:ok, tokens} <- Lexer.tokenize(sql) do
-      {:ok, statement(tokens)}
+      grammar_tokens = tokens |> Enum.with_index() |> Enum.map(&to_grammar/1)
+
+      case :efsql_sql_grammar.parse(grammar_tokens) do
+        {:ok, {:select, fields, from, where, order_by, limit}} ->
+          {:ok,
+           %AST.Select{fields: fields, from: from, where: where, order_by: order_by, limit: limit}}
+
+        {:error, {at, :efsql_sql_grammar, _}} ->
+          tokens = List.to_tuple(tokens)
+          {_, _, {line, column}} = elem(tokens, at)
+          reason = explain(tokens, at, expected(grammar_tokens, at))
+          {:error, %SyntaxError{reason: reason, line: line, column: column}}
+      end
     end
-  catch
-    {:syntax_error, reason, {line, column}} ->
-      {:error, %SyntaxError{reason: reason, line: line, column: column}}
   end
 
   @spec parse!(String.t()) :: AST.Select.t()
@@ -65,441 +101,161 @@ defmodule Efsql.SQL.Parser do
     end
   end
 
-  # -- statement --
+  defp to_grammar({{:word, word, _}, i}) when word in @keywords,
+    do: {String.to_atom(word), i, word}
 
-  defp statement([{:eof, _, pos}]), do: error("empty statement", pos)
+  defp to_grammar({{:word, word, _}, i}), do: {:ident, i, word}
+  defp to_grammar({{:op, op, _}, i}), do: {op, i, op}
+  defp to_grammar({{:eof, nil, _}, i}), do: {:"$end", i}
+  defp to_grammar({{type, value, _}, i}), do: {type, i, value}
 
-  defp statement(tokens) do
-    {select, rest} = select(tokens)
+  # -- errors --
 
-    case rest do
-      [{:eof, _, _}] -> select
-      [{:op, :";", _}, {:eof, _, _}] -> select
-      [{:op, :";", _}, {_, _, pos} | _] -> error("only one statement is supported", pos)
-      [token | _] -> end_of_statement_error(token)
+  # The terminals the grammar accepts after the first `at` tokens. An LR
+  # parser never shifts a token it can't use, so a candidate is refused
+  # exactly when the parse fails at the candidate itself.
+  defp expected(grammar_tokens, at) do
+    prefix = Enum.take(grammar_tokens, at)
+
+    for terminal <- @terminals, accepts?(prefix, at, terminal), into: MapSet.new() do
+      terminal
     end
   end
 
-  defp end_of_statement_error({:word, word, pos}) when is_map_key(@unsupported_clauses, word) do
-    error("#{Map.fetch!(@unsupported_clauses, word)} is not supported", pos)
+  defp accepts?(prefix, at, :"$end"), do: accepts?(prefix ++ [{:"$end", at}], at)
+
+  defp accepts?(prefix, at, terminal),
+    do: accepts?(prefix ++ [{terminal, at, sample(terminal)}, {:"$end", at + 1}], at)
+
+  defp accepts?(tokens, at),
+    do: not match?({:error, {^at, _, _}}, :efsql_sql_grammar.parse(tokens))
+
+  defp sample(:integer), do: 1
+  defp sample(:float), do: 1.0
+  defp sample(terminal) when terminal in [:ident, :quoted, :string], do: "x"
+  defp sample(terminal) when is_atom(terminal), do: Atom.to_string(terminal)
+
+  defp explain(tokens, at, expected) do
+    token = elem(tokens, at)
+    previous = if at > 0, do: elem(tokens, at - 1)
+
+    table_part_limit(tokens, at) || hint(token, previous, at, expected) ||
+      "expected #{describe_expected(expected)}, got #{describe(token)}"
   end
 
-  defp end_of_statement_error({:op, op, pos}) when op in @arithmetic_ops do
-    error("arithmetic is not supported", pos)
+  # Only a table name has parts (storage_id.tenant.table), so a dot after
+  # a two-dot name is one part too many.
+  defp table_part_limit(tokens, at) do
+    if at >= 4 and match?({:op, :., _}, elem(tokens, at)) and
+         match?({:op, :., _}, elem(tokens, at - 2)) and
+         match?({:op, :., _}, elem(tokens, at - 4)),
+       do: "a table name has at most three parts (storage_id.tenant.table)"
   end
 
-  defp end_of_statement_error({_, _, pos} = token) do
-    error("expected end of statement, got #{describe(token)}", pos)
-  end
+  # Hints for what the grammar doesn't cover yet, and one for reserved
+  # words used as names.
+  defp hint({:eof, _, _}, nil, 0, _), do: "empty statement"
 
-  defp select([{:word, "select", _} | rest]) do
-    {fields, rest} = select_list(rest)
-    rest = expect_keyword(rest, "from", "FROM")
-    {from, rest} = table_name(rest)
+  defp hint({:word, word, _}, nil, 0, _) when word in @not_select,
+    do: "only SELECT statements are supported"
 
-    case rest do
-      [{:op, :",", pos} | _] -> error("selecting from more than one table is not supported", pos)
-      _ -> :ok
-    end
+  defp hint(_, {:op, :";", _}, _, _), do: "only one statement is supported"
 
-    {where, rest} = where(rest)
-    {order_by, rest} = order_by(rest)
-    {limit, rest} = limit(rest)
+  defp hint({:word, "select", _}, {:op, :"(", _}, _, _), do: "subqueries are not supported"
 
-    {%AST.Select{fields: fields, from: from, where: where, order_by: order_by, limit: limit},
-     rest}
-  end
+  defp hint({:word, word, _}, _, _, expected) when word in @reserved do
+    cond do
+      word == "distinct" ->
+        "DISTINCT is not supported"
 
-  defp select([{:word, word, pos} | _]) when word in @not_select,
-    do: error("only SELECT statements are supported", pos)
+      MapSet.member?(expected, :ident) ->
+        "expected #{describe_expected(expected)}, got the keyword '#{word}' " <>
+          "(quote it, \"#{word}\", to use it as a name)"
 
-  defp select([{_, _, pos} = token | _]),
-    do: error("expected SELECT, got #{describe(token)}", pos)
+      Map.has_key?(@unsupported, word) ->
+        "#{@unsupported[word]} is not supported"
 
-  # -- SELECT list --
-
-  defp select_list([{:op, :*, _} | rest]) do
-    case rest do
-      [{:op, :",", pos} | _] -> error("* can't be combined with other fields", pos)
-      _ -> {:star, rest}
-    end
-  end
-
-  defp select_list([{:word, "distinct", pos} | _]), do: error("DISTINCT is not supported", pos)
-
-  defp select_list(tokens) do
-    {name, rest} = name(tokens, "a field name or *")
-    rest = reject_qualified_or_call(rest)
-
-    case rest do
-      [{:op, :",", _} | rest] ->
-        {names, rest} = select_list_rest(rest)
-        {[name | names], rest}
-
-      rest ->
-        {[name], rest}
+      true ->
+        nil
     end
   end
 
-  defp select_list_rest(tokens) do
-    {name, rest} = name(tokens, "a field name")
-    rest = reject_qualified_or_call(rest)
+  defp hint({:word, "fetch", _}, _, _, _), do: "FETCH is not supported"
 
-    case rest do
-      [{:op, :",", _} | rest] ->
-        {names, rest} = select_list_rest(rest)
-        {[name | names], rest}
+  defp hint({:op, :"(", _}, {:word, word, _}, _, _) when word not in @keywords,
+    do: "functions are not supported"
 
-      rest ->
-        {[name], rest}
+  defp hint({:op, :"(", _}, {:quoted, _, _}, _, _), do: "functions are not supported"
+
+  defp hint({:op, :., _}, {type, _, _}, _, _) when type in [:word, :quoted],
+    do: "qualified column names are not supported"
+
+  defp hint({:op, op, _}, previous, _, _)
+       when op in [:+, :-, :*, :/, :%] and previous != nil do
+    if ends_operand?(previous), do: "arithmetic is not supported"
+  end
+
+  defp hint(_, {:op, sign, _}, _, expected) when sign in [:+, :-] do
+    if MapSet.member?(expected, :integer), do: "a sign is only supported on a number"
+  end
+
+  defp hint(_, _, _, _), do: nil
+
+  defp ends_operand?({:word, word, _}), do: word not in @reserved
+
+  defp ends_operand?({type, _, _}) when type in [:quoted, :string, :integer, :float],
+    do: true
+
+  defp ends_operand?({:op, :")", _}), do: true
+  defp ends_operand?(_), do: false
+
+  # Collapses the accepted terminals into a few words: "an expression",
+  # "a name", "an operator", "a type name", then any keywords and symbols.
+  defp describe_expected(expected) do
+    cond do
+      MapSet.member?(expected, :"$end") ->
+        "the end of the statement"
+
+      MapSet.member?(expected, :from) and MapSet.member?(expected, :ident) ->
+        "a type name"
+
+      true ->
+        {groups, rest} =
+          Enum.reduce(
+            [
+              {"an expression", @expression_starts ++ [:not]},
+              {"a name", @name_starts},
+              {"an operator", @operators}
+            ],
+            {[], expected},
+            fn {label, members}, {groups, rest} ->
+              if group_present?(label, members, rest),
+                do: {[label | groups], MapSet.difference(rest, MapSet.new(members))},
+                else: {groups, rest}
+            end
+          )
+
+        (Enum.reverse(groups) ++ Enum.map(Enum.filter(@terminals, &(&1 in rest)), &terminal/1))
+        |> join_or()
     end
   end
 
-  # -- FROM --
-
-  defp table_name(tokens) do
-    {first, rest} = name(tokens, "a table name")
-    table_name_parts(rest, [first])
-  end
-
-  defp table_name_parts([{:op, :., pos} | rest], parts) do
-    if length(parts) == 3 do
-      error("a table name has at most three parts (storage_id.tenant.table)", pos)
-    end
-
-    {part, rest} = name(rest, "a name after '.'")
-    table_name_parts(rest, parts ++ [part])
-  end
-
-  defp table_name_parts(rest, parts), do: {parts, rest}
-
-  # -- WHERE --
-
-  defp where([{:word, "where", _} | rest]) do
-    {expr, rest} = expr(rest, 0)
-    {expr, rest}
-  end
-
-  defp where(rest), do: {nil, rest}
-
-  # -- ORDER BY --
-
-  defp order_by([{:word, "order", _} | rest]) do
-    rest = expect_keyword(rest, "by", "BY after ORDER")
-    order_items(rest)
-  end
-
-  defp order_by(rest), do: {[], rest}
-
-  defp order_items(tokens) do
-    {name, rest} = name(tokens, "a field name to order by")
-    rest = reject_qualified_or_call(rest)
-
-    {dir, rest} =
-      case rest do
-        [{:word, "asc", _} | rest] -> {:asc, rest}
-        [{:word, "desc", _} | rest] -> {:desc, rest}
-        rest -> {:asc, rest}
-      end
-
-    case rest do
-      [{:word, "nulls", pos} | _] ->
-        error("NULLS FIRST/LAST is not supported", pos)
-
-      [{:op, :",", _} | rest] ->
-        {items, rest} = order_items(rest)
-        {[{name, dir} | items], rest}
-
-      rest ->
-        {[{name, dir}], rest}
-    end
-  end
-
-  # -- LIMIT --
-
-  defp limit([{:word, "limit", _} | rest]) do
-    case rest do
-      [{:integer, n, _} | rest] ->
-        {n, rest}
-
-      [{_, _, pos} = token | _] ->
-        error("LIMIT expects a whole number, got #{describe(token)}", pos)
-    end
-  end
-
-  defp limit(rest), do: {nil, rest}
-
-  # -- expressions --
-
-  defp expr(tokens, depth), do: or_expr(tokens, depth)
-
-  defp or_expr(tokens, depth) do
-    {left, rest} = and_expr(tokens, depth)
-    or_rest(left, rest, depth)
-  end
-
-  defp or_rest(left, [{:word, "or", _} | rest], depth) do
-    {right, rest} = and_expr(rest, depth)
-    or_rest({:or, left, right}, rest, depth)
-  end
-
-  defp or_rest(left, rest, _depth), do: {left, rest}
-
-  defp and_expr(tokens, depth) do
-    {left, rest} = not_expr(tokens, depth)
-    and_rest(left, rest, depth)
-  end
-
-  defp and_rest(left, [{:word, "and", _} | rest], depth) do
-    {right, rest} = not_expr(rest, depth)
-    and_rest({:and, left, right}, rest, depth)
-  end
-
-  defp and_rest(left, rest, _depth), do: {left, rest}
-
-  defp not_expr([{:word, "not", pos} | rest], depth) do
-    check_depth(depth, pos)
-    {expr, rest} = not_expr(rest, depth + 1)
-    {{:not, expr}, rest}
-  end
-
-  defp not_expr(tokens, depth), do: predicate(tokens, depth)
-
-  defp predicate(tokens, depth) do
-    {left, rest} = operand(tokens, depth)
-
-    case rest do
-      [{:op, op, _} | rest] when op in @comparison_ops ->
-        {right, rest} = operand(rest, depth)
-        {{:compare, op, left, right}, rest}
-
-      [{:op, op, pos} | _] when op in @arithmetic_ops ->
-        error("arithmetic is not supported", pos)
-
-      [{:word, "not", _}, {:word, word, _} = next | rest]
-      when word in ~w[between in like ilike] ->
-        negatable(left, next, rest, true, depth)
-
-      [{:word, word, _} = next | rest] when word in ~w[between in like ilike] ->
-        negatable(left, next, rest, false, depth)
-
-      [{:word, "is", _} | rest] ->
-        is_null(left, rest)
-
-      [{:word, "isnull", _} | rest] ->
-        {{:is_null, left, false}, rest}
-
-      [{:word, "notnull", _} | rest] ->
-        {{:is_null, left, true}, rest}
-
-      rest ->
-        {left, rest}
-    end
-  end
-
-  defp negatable(left, {:word, "between", _}, rest, negated?, depth) do
-    {low, rest} = operand(rest, depth)
-    rest = expect_keyword(rest, "and", "AND in BETWEEN")
-    {high, rest} = operand(rest, depth)
-    {{:between, left, low, high, negated?}, rest}
-  end
-
-  defp negatable(left, {:word, "in", _}, rest, negated?, depth) do
-    case rest do
-      [{:op, :"(", pos}, {:op, :")", _} | _] ->
-        error("IN needs at least one value", pos)
-
-      [{:op, :"(", pos} | rest] ->
-        check_depth(depth, pos)
-        {values, rest} = expr_list(rest, depth + 1)
-        rest = expect_op(rest, :")", "')' to close the IN list")
-        {{:in, left, values, negated?}, rest}
-
-      [{_, _, pos} = token | _] ->
-        error("expected '(' after IN, got #{describe(token)}", pos)
-    end
-  end
-
-  defp negatable(left, {:word, like, _}, rest, negated?, depth) when like in ~w[like ilike] do
-    {pattern, rest} = operand(rest, depth)
-    {{String.to_atom(like), left, pattern, negated?}, rest}
-  end
-
-  defp is_null(left, rest) do
-    {negated?, rest} =
-      case rest do
-        [{:word, "not", _} | rest] -> {true, rest}
-        rest -> {false, rest}
-      end
-
-    case rest do
-      [{:word, "null", _} | rest] ->
-        {{:is_null, left, negated?}, rest}
-
-      [{_, _, pos} = token | _] ->
-        error("expected NULL after IS#{if negated?, do: " NOT"}, got #{describe(token)}", pos)
-    end
-  end
-
-  defp expr_list(tokens, depth) do
-    {expr, rest} = expr(tokens, depth)
-
-    case rest do
-      [{:op, :",", _} | rest] ->
-        {exprs, rest} = expr_list(rest, depth)
-        {[expr | exprs], rest}
-
-      rest ->
-        {[expr], rest}
-    end
-  end
-
-  # An operand is a primary followed by any number of `::type` casts.
-  defp operand(tokens, depth) do
-    {primary, rest} = primary(tokens, depth)
-    casts(primary, rest)
-  end
-
-  defp casts(expr, [{:op, :"::", _} | rest]) do
-    {type, rest} = type_name(rest)
-    casts({:cast, expr, type}, rest)
-  end
-
-  defp casts(expr, rest), do: {expr, rest}
-
-  defp primary([{:string, s, _} | rest], _depth), do: {{:literal, s}, rest}
-  defp primary([{:integer, n, _} | rest], _depth), do: {{:literal, n}, rest}
-  defp primary([{:float, f, _} | rest], _depth), do: {{:literal, f}, rest}
-
-  defp primary([{:op, :-, _}, {type, n, _} | rest], _depth) when type in [:integer, :float],
-    do: {{:literal, -n}, rest}
-
-  defp primary([{:op, :+, _}, {type, n, _} | rest], _depth) when type in [:integer, :float],
-    do: {{:literal, n}, rest}
-
-  defp primary([{:op, sign, pos} | _], _depth) when sign in [:-, :+],
-    do: error("a sign is only supported on a number", pos)
-
-  defp primary([{:word, "true", _} | rest], _depth), do: {{:literal, true}, rest}
-  defp primary([{:word, "false", _} | rest], _depth), do: {{:literal, false}, rest}
-  defp primary([{:word, "null", _} | rest], _depth), do: {{:literal, nil}, rest}
-
-  defp primary([{:word, "select", pos} | _], _depth),
-    do: error("subqueries are not supported", pos)
-
-  defp primary([{:word, "cast", _}, {:op, :"(", pos} | rest], depth) do
-    check_depth(depth, pos)
-    {expr, rest} = expr(rest, depth + 1)
-    rest = expect_keyword(rest, "as", "AS in CAST")
-    {type, rest} = type_name(rest)
-    rest = expect_op(rest, :")", "')' to close CAST")
-    {{:cast, expr, type}, rest}
-  end
-
-  defp primary([{:op, :"(", pos} | rest], depth) do
-    check_depth(depth, pos)
-    {first, rest} = paren_element(rest, depth + 1)
-
-    case rest do
-      [{:op, :",", _} | rest] ->
-        {elements, rest} = tuple_elements(rest, depth + 1)
-        rest = expect_op(rest, :")", "')' to close the tuple")
-        {{:tuple, [first | elements]}, rest}
-
-      rest ->
-        if first == :star, do: error("'*' is only allowed in a tuple", pos)
-        rest = expect_op(rest, :")", "')'")
-        {first, rest}
-    end
-  end
-
-  defp primary([{:word, word, pos} | _] = tokens, _depth) when word not in @reserved do
-    {name, rest} = name(tokens, "an expression")
-
-    case rest do
-      [{:op, :"(", _} | _] -> error("functions are not supported", pos)
-      [{:op, :., dot} | _] -> error("qualified column names are not supported", dot)
-      rest -> {{:column, name}, rest}
-    end
-  end
-
-  defp primary([{:quoted, _, _} | _] = tokens, _depth) do
-    {name, rest} = name(tokens, "an expression")
-    {{:column, name}, reject_qualified_or_call(rest)}
-  end
-
-  defp primary([{_, _, pos} = token | _], _depth),
-    do: error("expected an expression, got #{describe(token)}", pos)
-
-  defp paren_element([{:op, :*, _} | rest], _depth), do: {:star, rest}
-  defp paren_element(tokens, depth), do: expr(tokens, depth)
-
-  defp tuple_elements(tokens, depth) do
-    {element, rest} = paren_element(tokens, depth)
-
-    case rest do
-      [{:op, :",", _} | rest] ->
-        {elements, rest} = tuple_elements(rest, depth)
-        {[element | elements], rest}
-
-      rest ->
-        {[element], rest}
-    end
-  end
-
-  # A type is any word (reserved ones like date and time included), with
-  # PostgreSQL's `timestamp with[out] time zone` spelled out.
-  defp type_name([{:word, type, _} | rest]) when type in ~w[timestamp time] do
-    case rest do
-      [{:word, "with", _}, {:word, "time", _}, {:word, "zone", _} | rest] -> {type <> "tz", rest}
-      [{:word, "without", _}, {:word, "time", _}, {:word, "zone", _} | rest] -> {type, rest}
-      rest -> {type, rest}
-    end
-  end
-
-  defp type_name([{:word, type, _} | rest]), do: {type, rest}
-
-  defp type_name([{_, _, pos} = token | _]),
-    do: error("expected a type name, got #{describe(token)}", pos)
-
-  # -- names --
-
-  defp name([{:word, word, pos} | _], what) when word in @reserved do
-    error(
-      "expected #{what}, got the keyword '#{word}' (quote it, \"#{word}\", to use it as a name)",
-      pos
-    )
-  end
-
-  defp name([{:word, word, _} | rest], _what), do: {word, rest}
-  defp name([{:quoted, name, _} | rest], _what), do: {name, rest}
-
-  defp name([{_, _, pos} = token | _], what),
-    do: error("expected #{what}, got #{describe(token)}", pos)
-
-  defp reject_qualified_or_call([{:op, :"(", pos} | _]),
-    do: error("functions are not supported", pos)
-
-  defp reject_qualified_or_call([{:op, :., pos} | _]),
-    do: error("qualified column names are not supported", pos)
-
-  defp reject_qualified_or_call(rest), do: rest
-
-  # -- helpers --
-
-  defp expect_keyword([{:word, word, _} | rest], word, _what), do: rest
-
-  defp expect_keyword([{_, _, pos} = token | _], _word, what),
-    do: error("expected #{what}, got #{describe(token)}", pos)
-
-  defp expect_op([{:op, op, _} | rest], op, _what), do: rest
-
-  defp expect_op([{_, _, pos} = token | _], _op, what),
-    do: error("expected #{what}, got #{describe(token)}", pos)
-
-  defp check_depth(depth, pos) do
-    if depth >= @max_depth, do: error("expression is nested too deeply", pos)
-  end
+  defp group_present?("an operator", _members, rest),
+    do: Enum.all?(@comparisons, &MapSet.member?(rest, &1))
+
+  defp group_present?(_label, members, rest),
+    do: Enum.all?(members -- [:not], &MapSet.member?(rest, &1))
+
+  defp terminal(:integer), do: "a whole number"
+  defp terminal(:float), do: "a number"
+  defp terminal(:string), do: "a string"
+  defp terminal(:ident), do: "a name"
+  defp terminal(:quoted), do: "a quoted name"
+  defp terminal(op) when op in @ops, do: "'#{op}'"
+  defp terminal(keyword), do: keyword |> Atom.to_string() |> String.upcase()
+
+  defp join_or([one]), do: one
+  defp join_or(items), do: Enum.join(Enum.drop(items, -1), ", ") <> " or " <> List.last(items)
 
   defp describe({:word, word, _}), do: "'#{word}'"
   defp describe({:quoted, name, _}), do: inspect(name)
@@ -511,6 +267,4 @@ defmodule Efsql.SQL.Parser do
   defp truncate(s) do
     if String.length(s) > 20, do: String.slice(s, 0, 20) <> "...", else: s
   end
-
-  defp error(reason, pos), do: throw({:syntax_error, reason, pos})
 end

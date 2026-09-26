@@ -296,15 +296,6 @@ defmodule EfsqlTest.SQLGen do
   @doc "Up to 40 random SQL-ish fragments and bytes, invalid UTF-8 included."
   def garbage(), do: random_string(@alphabet, 0..40)
 
-  @doc "A valid query, a mangled one, or garbage, in equal measure."
-  def any_input() do
-    case Enum.random(1..3) do
-      1 -> select() |> to_sql()
-      2 -> select() |> to_sql() |> mangle(Enum.random(1..4))
-      3 -> garbage()
-    end
-  end
-
   # -- helpers --
 
   defp random_string(pool, range) do

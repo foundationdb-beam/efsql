@@ -1,17 +1,20 @@
-%% Grammar for efsql's SQL dialect, driven by Efsql.SQL.Yecc.
+%% Grammar for efsql's SQL dialect. Efsql.SQL.Parser drives it with
+%% tokens from Efsql.SQL.Lexer:
 %%
 %%   SELECT fields FROM name [WHERE expr] [ORDER BY items] [LIMIT n] [;]
 %%
-%% Tokens are {Category, {Line, Column}, Value}; `/` and `%` have no
-%% terminal, so they are syntax errors wherever they appear. Words the driver finds in
-%% the reserved list come as their own category; `time`, `timestamp`,
-%% `without` and `zone` do too, but stay usable as names. Everything else
-%% is `ident`.
+%% A token is {Category, Index, Value}, where Index is its place in the
+%% token list, so an error names its token exactly. Words in the reserved
+%% list (Efsql.SQL.Parser.reserved_words/0) come as their own category and
+%% must match the keyword Terminals below; `time`, `timestamp`, `without`
+%% and `zone` do too, but stay usable as names. Every other word is
+%% `ident`. `/` and `%` have no terminal, so they are errors anywhere.
 %%
-%% The grammar accepts exactly the valid statements; explaining an error
-%% in words is the driver's job, since yecc only reports the token it
-%% stopped at. Actions build the same tree as Efsql.SQL.Parser (see
-%% Efsql.SQL.AST), with the statement as a tuple the driver makes a struct.
+%% The grammar accepts exactly the valid statements. Error messages are
+%% worked out from it by the driver, which asks which tokens could have
+%% come next, so a new rule needs nothing else to be explained. Actions
+%% build Efsql.SQL.AST, with the statement as a tuple the driver makes a
+%% struct.
 
 Nonterminals
 statement select_stmt fields field_list table where_clause order_clause order_items order_item limit_clause

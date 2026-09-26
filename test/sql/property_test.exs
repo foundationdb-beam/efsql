@@ -1,44 +1,41 @@
 defmodule Efsql.SQL.PropertyTest do
-  # Randomized tests, run against both parsers. `:rand` is seeded per test
+  # Randomized tests. `:rand` is seeded per test
   # from ExUnit's --seed, so a failure reproduces with `mix test --seed N`.
-  use ExUnit.Case,
-    async: true,
-    parameterize: [%{parser: Efsql.SQL.Parser}, %{parser: Efsql.SQL.Yecc}]
+  use ExUnit.Case, async: true
 
   alias Efsql.Exception.Unsupported
   alias Efsql.SQL.AST.Select
+  alias Efsql.SQL.Parser
   alias Efsql.SQL.SyntaxError
   alias EfsqlTest.SQLGen
 
   @runs 1_000
 
-  test "printing a random tree and parsing it gives the tree back", %{parser: parser} do
+  test "printing a random tree and parsing it gives the tree back" do
     for _ <- 1..@runs do
       select = SQLGen.select()
       sql = SQLGen.to_sql(select)
 
-      assert parser.parse(sql) == {:ok, select}, """
+      assert Parser.parse(sql) == {:ok, select}, """
       SQL:
       #{sql}
       """
     end
   end
 
-  test "mangled queries parse or fail with a positioned SyntaxError, never crash",
-       %{parser: parser} do
+  test "mangled queries parse or fail with a positioned SyntaxError, never crash" do
     for _ <- 1..@runs do
-      check(parser, SQLGen.select() |> SQLGen.to_sql() |> SQLGen.mangle(Enum.random(1..4)))
+      check(SQLGen.select() |> SQLGen.to_sql() |> SQLGen.mangle(Enum.random(1..4)))
     end
   end
 
-  test "random bytes parse or fail with a positioned SyntaxError, never crash",
-       %{parser: parser} do
-    for _ <- 1..@runs, do: check(parser, SQLGen.garbage())
+  test "random bytes parse or fail with a positioned SyntaxError, never crash" do
+    for _ <- 1..@runs, do: check(SQLGen.garbage())
   end
 
-  test "valid queries translate to a logical plan or raise Unsupported", %{parser: parser} do
+  test "valid queries translate to a logical plan or raise Unsupported" do
     for _ <- 1..@runs do
-      {:ok, select} = parser.parse(SQLGen.select() |> SQLGen.to_sql())
+      {:ok, select} = Parser.parse(SQLGen.select() |> SQLGen.to_sql())
 
       try do
         Efsql.Parser.to_logical(select)
@@ -54,20 +51,20 @@ defmodule Efsql.SQL.PropertyTest do
     end
   end
 
-  test "big inputs parse and translate quickly", %{parser: parser} do
+  test "big inputs parse and translate quickly" do
     values = Enum.map_join(1..20_000, ", ", &"'v#{&1}'")
     conditions = Enum.map_join(1..20_000, " and ", &"f#{&1} = #{&1}")
     sql = "select a from t where a in (#{values}) and #{conditions}"
 
     {micros, %Efsql.Logical.Select{predicates: predicates}} =
-      :timer.tc(fn -> sql |> parser.parse!() |> Efsql.Parser.to_logical() end)
+      :timer.tc(fn -> sql |> Parser.parse!() |> Efsql.Parser.to_logical() end)
 
     assert length(predicates) == 20_001
     assert micros < 5_000_000
   end
 
-  defp check(parser, sql) do
-    case parser.parse(sql) do
+  defp check(sql) do
+    case Parser.parse(sql) do
       {:ok, %Select{}} ->
         :ok
 
