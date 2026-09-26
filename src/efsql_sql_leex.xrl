@@ -9,9 +9,10 @@
 %% string, quoted, unterminated, number, bad_exponent, number_junk, word,
 %% op, colon.
 %%
-%% Invalid UTF-8 bytes reach this lexer as integers above 16#10FFFF; no
-%% positive class includes them, so outside strings and comments they are
-%% illegal characters.
+%% Invalid UTF-8 bytes reach this lexer as UTF-16 surrogates (16#D800 +
+%% byte), which decoded UTF-8 never contains and leex's column counting
+%% still accepts. No positive class includes them, so outside strings and
+%% comments they are illegal characters.
 
 Definitions.
 
@@ -21,7 +22,7 @@ NUM = ({D}+\.?{D}*|\.{D}+)
 %% needs its own parentheses.
 EXP = ([eE][+-]?{D}+)
 WS  = [\s\t\f\v\r\n\x{A0}\x{1680}\x{2000}-\x{200A}\x{202F}\x{205F}\x{3000}\x{FEFF}]
-ID  = [A-Za-z_\x{80}-\x{10FFFF}][A-Za-z0-9_$\x{80}-\x{10FFFF}]*
+ID  = [A-Za-z_\x{80}-\x{D7FF}\x{E000}-\x{10FFFF}][A-Za-z0-9_$\x{80}-\x{D7FF}\x{E000}-\x{10FFFF}]*
 
 Rules.
 
@@ -39,7 +40,7 @@ Rules.
 %% a number running into another character (which the driver checks).
 {NUM}{EXP}? : {token, {number, TokenChars}}.
 {NUM}[eE][+-]? : {token, {bad_exponent, TokenChars}}.
-{NUM}{EXP}?[A-Za-z_.0-9\x{80}-\x{10FFFF}] : {token, {number_junk, TokenChars}}.
+{NUM}{EXP}?[A-Za-z_.0-9\x{80}-\x{D7FF}\x{E000}-\x{10FFFF}] : {token, {number_junk, TokenChars}}.
 
 {ID} : {token, {word, TokenChars}}.
 
@@ -51,7 +52,7 @@ Rules.
 [=<>(),.;*+\-/%] : {token, {op, TokenChars}}.
 
 %% A lone colon, or one followed by anything: the driver explains it.
-:[\x{0}-\x{10FFFF}] : {token, {colon, TokenChars}}.
+:[\x{0}-\x{D7FF}\x{E000}-\x{10FFFF}] : {token, {colon, TokenChars}}.
 : : {token, {colon, TokenChars}}.
 
 Erlang code.

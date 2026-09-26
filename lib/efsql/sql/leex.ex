@@ -12,8 +12,12 @@ defmodule Efsql.SQL.Leex do
 
   alias Efsql.SQL.SyntaxError
 
-  # Invalid UTF-8 bytes are passed to leex as integers above U+10FFFF.
-  @bad_byte 0x110000
+  # Invalid UTF-8 bytes are passed to leex as UTF-16 surrogates, which
+  # decoded UTF-8 never contains (and which leex, unlike integers above
+  # U+10FFFF, can count columns for).
+  @bad_byte 0xD800
+
+  defguardp bad_byte?(c) when c in @bad_byte..(@bad_byte + 0xFF)//1
 
   @ops %{
     ~c"<>" => :<>,
@@ -186,13 +190,13 @@ defmodule Efsql.SQL.Leex do
 
   # An invalid byte inside a string or quoted name is reported where it is.
   defp check_bytes(matched, {line, col}) do
-    case Enum.split_while(matched, &(&1 < @bad_byte)) do
+    case Enum.split_while(matched, &(not bad_byte?(&1))) do
       {_, []} -> :ok
       {before, [bad | _]} -> illegal(bad, advance(before, line, col))
     end
   end
 
-  defp illegal(c, pos) when c >= @bad_byte,
+  defp illegal(c, pos) when bad_byte?(c),
     do: error("invalid UTF-8 byte 0x#{Integer.to_string(c - @bad_byte, 16)}", pos)
 
   defp illegal(c, pos), do: error("unexpected character #{inspect(<<c::utf8>>)}", pos)
@@ -229,11 +233,11 @@ defmodule Efsql.SQL.Leex do
 
   # The same character classes as Efsql.SQL.Lexer.
   defp word_start?(c) when c in ?a..?z or c in ?A..?Z or c == ?_, do: true
-  defp word_start?(c) when c < 128 or c >= @bad_byte, do: false
+  defp word_start?(c) when c < 128 or bad_byte?(c), do: false
   defp word_start?(c), do: String.match?(<<c::utf8>>, ~r/^\p{L}$/u)
 
   defp word_continue?(c) when c in ?0..?9 or c == ?$, do: true
-  defp word_continue?(c) when c < 128 or c >= @bad_byte, do: word_start?(c)
+  defp word_continue?(c) when c < 128 or bad_byte?(c), do: word_start?(c)
   defp word_continue?(c), do: String.match?(<<c::utf8>>, ~r/^[\p{L}\p{M}\p{N}]$/u)
 
   defp unicode_space?(c),
