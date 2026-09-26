@@ -105,22 +105,27 @@ defmodule EfsqlTest.Integration.CrossTenant do
       "select _tenant, count(*) as n, max(name) as last from *.users " <>
         "where #{context[:both]} group by _tenant order by last desc;"
 
-    # One tenant per batch, and no tenant limit: each transaction reads one.
-    {%Plan{access: {:batches, batches}} = plan, rows, _tenants} =
-      Efsql.qall(sql, tenant_batch: 1, max_tenants: 1)
+    # grouping and ordering see every tenant's rows together
+    expected = [
+      %{_tenant: context[:other], n: 2, last: "Eve"},
+      %{_tenant: context[:tenant_id], n: 3, last: "Charles"}
+    ]
 
-    assert [{:fan_out, [_]}, {:fan_out, [_]}] = batches
-    assert Efsql.Fanout.transactions(plan) == 2
-
-    # grouping and ordering still see every tenant's rows together
-    assert rows == [
-             %{_tenant: context[:other], n: 2, last: "Eve"},
-             %{_tenant: context[:tenant_id], n: 3, last: "Charles"}
-           ]
-
-    # the same result as one transaction
-    {plan, ^rows, _tenants} = Efsql.qall(sql)
+    {plan, ^expected, _tenants} = Efsql.qall(sql)
     assert Efsql.Fanout.transactions(plan) == 1
+
+    # One tenant per batch, and no tenant limit: each transaction reads one.
+    # The same result whether the batches are read one at a time or together.
+    for concurrency <- [1, 2] do
+      options = [tenant_batch: 1, max_tenants: 1, batch_concurrency: concurrency]
+
+      {%Plan{access: {:batches, batches, ^concurrency}} = plan, rows, _tenants} =
+        Efsql.qall(sql, options)
+
+      assert [{:fan_out, [_]}, {:fan_out, [_]}] = batches
+      assert Efsql.Fanout.transactions(plan) == 2
+      assert rows == expected
+    end
   end
 
   test "a read too old for its transaction fails at once instead of retrying", context do

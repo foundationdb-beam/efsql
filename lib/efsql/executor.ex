@@ -35,6 +35,39 @@ defmodule Efsql.Executor do
     Enum.reduce(ops, fetch(access), &apply_op/2)
   end
 
+  @doc """
+  Maps `fun` over `items`, up to `max` at a time, each in a process of its
+  own, and returns the results in order. The first failure stops the rest
+  and is raised (or thrown, or exited) here as it was there, so a caller's
+  `rescue` sees the original exception rather than a linked process's
+  exit. With `max` 1 it all runs in the calling process.
+  """
+  def map_concurrently(items, 1, fun), do: Enum.map(items, fun)
+
+  def map_concurrently(items, max, fun) do
+    items
+    |> Task.async_stream(
+      fn item ->
+        try do
+          {:ok, fun.(item)}
+        catch
+          kind, reason -> {:failed, kind, reason, __STACKTRACE__}
+        end
+      end,
+      max_concurrency: max,
+      ordered: true,
+      timeout: :infinity
+    )
+    |> Enum.reduce_while([], fn
+      {:ok, {:ok, result}}, results -> {:cont, [result | results]}
+      {:ok, failed}, _results -> {:halt, failed}
+    end)
+    |> case do
+      {:failed, kind, reason, stacktrace} -> :erlang.raise(kind, reason, stacktrace)
+      results -> Enum.reverse(results)
+    end
+  end
+
   @doc "Whether `row` satisfies every one of `predicates`, with SQL NULL semantics."
   def matches?(row, predicates), do: Enum.all?(predicates, &eval(&1, row))
 
@@ -52,8 +85,9 @@ defmodule Efsql.Executor do
     Efsql.Repo.all_from_source(query, options)
   end
 
-  # One transaction per batch, one after another.
-  defp fetch({:batches, batches}), do: Enum.flat_map(batches, &fetch/1)
+  # One transaction per batch, up to `concurrency` at a time.
+  defp fetch({:batches, batches, concurrency}),
+    do: batches |> map_concurrently(concurrency, &fetch/1) |> Enum.concat()
 
   defp fetch({:fan_out, []}), do: []
 

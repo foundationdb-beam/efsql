@@ -220,7 +220,8 @@ When the tenants don't fit in one transaction, read them in batches:
 ```
 
 Each batch of 25 tenants is then its own transaction, and there is no
-tenant limit. Grouping, ordering and `LIMIT` still apply to all the rows
+tenant limit. Up to four batches are read at once (the
+`:efsql, :batch_concurrency` setting, or `batch_concurrency:` from Elixir). Grouping, ordering and `LIMIT` still apply to all the rows
 together, but the result is no longer one snapshot: each batch sees the
 database at a slightly different moment, and the result says how many
 transactions it came from. `\set tenant_batch off` goes back to one

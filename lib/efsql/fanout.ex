@@ -19,10 +19,12 @@ defmodule Efsql.Fanout do
   One transaction has to finish within FoundationDB's five seconds, so a
   query over many or large tenants may not fit. With `:tenant_batch` set,
   the tenants are read in batches of that many, one transaction each:
-  `{:batches, [{:fan_out, ...}]}`. Each batch is a snapshot of its own,
-  so the result as a whole is not one; `transactions/1` says how many
-  there were, for the result to say so. Grouping, ordering and the limit
-  still apply to all the rows together.
+  `{:batches, [{:fan_out, ...}], concurrency}`. Up to `concurrency`
+  batches are read at once, each in a process and transaction of its own.
+  Each batch is a snapshot of its own, so the result as a whole is not
+  one; `transactions/1` says how many there were, for the result to say
+  so. Grouping, ordering and the limit still apply to all the rows
+  together.
   """
 
   alias Efsql.Exception.Unsupported
@@ -32,6 +34,7 @@ defmodule Efsql.Fanout do
   alias Efsql.Planner
 
   @default_max_tenants 100
+  @default_batch_concurrency 4
 
   @doc """
   Returns `{plan, tenants}`, opening tenants through the session's
@@ -41,6 +44,9 @@ defmodule Efsql.Fanout do
 
     * `:tenant_batch` - read the tenants in batches of this many, one
       transaction each, instead of all in one. Default nil (one).
+    * `:batch_concurrency` - how many batches to read at once (default
+      #{@default_batch_concurrency}, or the `:efsql, :batch_concurrency`
+      application setting).
     * `:max_tenants` - the most tenants one transaction may read (default
       #{@default_max_tenants}, or the `:efsql, :max_tenants` application
       setting). It doesn't apply with `:tenant_batch`, which bounds each
@@ -53,8 +59,14 @@ defmodule Efsql.Fanout do
     {max_tenants, options} = Keyword.pop(options, :max_tenants, default)
     {batch, options} = Keyword.pop(options, :tenant_batch)
 
-    unless batch == nil or (is_integer(batch) and batch > 0) do
-      raise ArgumentError, "tenant_batch must be a positive integer, got #{inspect(batch)}"
+    concurrency_default =
+      Application.get_env(:efsql, :batch_concurrency, @default_batch_concurrency)
+
+    {concurrency, options} = Keyword.pop(options, :batch_concurrency, concurrency_default)
+
+    for {name, value} <- [tenant_batch: batch, batch_concurrency: concurrency],
+        value != nil and not (is_integer(value) and value > 0) do
+      raise ArgumentError, "#{name} must be a positive integer, got #{inspect(value)}"
     end
 
     {tenant_preds, row_preds} =
@@ -84,7 +96,9 @@ defmodule Efsql.Fanout do
 
     access =
       if batch,
-        do: {:batches, per_tenant |> Enum.chunk_every(batch) |> Enum.map(&{:fan_out, &1})},
+        do:
+          {:batches, per_tenant |> Enum.chunk_every(batch) |> Enum.map(&{:fan_out, &1}),
+           concurrency},
         else: {:fan_out, per_tenant}
 
     plan = %Plan{
@@ -100,7 +114,7 @@ defmodule Efsql.Fanout do
   How many transactions, so snapshots, a plan's result comes from: more
   than one only for a query across tenants read in batches.
   """
-  def transactions(%Plan{access: {:batches, batches}}), do: length(batches)
+  def transactions(%Plan{access: {:batches, batches, _concurrency}}), do: length(batches)
   def transactions(%Plan{}), do: 1
 
   defp list_tenants(nil), do: EctoFoundationDB.Tenant.list(Efsql.Repo)

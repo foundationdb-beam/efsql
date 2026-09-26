@@ -220,7 +220,7 @@ defmodule Efsql.Tui.AppTest do
   test "results read in batches say how many transactions they took" do
     model = %{activated() | mode: :query}
     rows = [%{name: "Alice", _tenant: "a"}, %{name: "Dora", _tenant: "b"}]
-    batches = {:batches, [{:fan_out, []}, {:fan_out, []}]}
+    batches = {:batches, [{:fan_out, []}, {:fan_out, []}], 4}
 
     plan = %Efsql.Physical.Plan{access: batches, ops: [], columns: [:name, :_tenant]}
     {batched, _} = feed(model, [{:done, :query, {:ok, {plan, rows, %{}, 1}}}])
