@@ -280,7 +280,7 @@ defmodule Efsql.Cli do
   defp print_snapshots(1), do: :ok
 
   defp print_snapshots(n) do
-    Owl.IO.puts(Owl.Data.tag("(read in #{n} transactions, not one snapshot)", :yellow))
+    Owl.IO.puts(Owl.Data.tag("(read in #{n} transactions)", :yellow))
   end
 
   defp column_sorter(nil), do: :asc

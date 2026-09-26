@@ -324,11 +324,11 @@ defmodule Efsql.Tui.View do
     [header] ++ rows ++ [footer]
   end
 
-  # A query across tenants read in batches is not one snapshot; say so.
+  # A query across tenants read in batches says how many transactions it took.
   defp snapshots_note(%Model{plan: %Efsql.Physical.Plan{} = plan}) do
     case Efsql.Fanout.transactions(plan) do
       1 -> ""
-      n -> " · #{n} transactions, not one snapshot"
+      n -> " · #{n} transactions"
     end
   end
 

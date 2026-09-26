@@ -217,14 +217,14 @@ defmodule Efsql.Tui.AppTest do
     assert {:error, "usage: " <> _} = model.flash
   end
 
-  test "results read in batches say they are not one snapshot" do
+  test "results read in batches say how many transactions they took" do
     model = %{activated() | mode: :query}
     rows = [%{name: "Alice", _tenant: "a"}, %{name: "Dora", _tenant: "b"}]
     batches = {:batches, [{:fan_out, []}, {:fan_out, []}]}
 
     plan = %Efsql.Physical.Plan{access: batches, ops: [], columns: [:name, :_tenant]}
     {batched, _} = feed(model, [{:done, :query, {:ok, {plan, rows, %{}, 1}}}])
-    assert frame_text(batched) =~ "(2 rows, 1 ms) · 2 transactions, not one snapshot"
+    assert frame_text(batched) =~ "(2 rows, 1 ms) · 2 transactions"
 
     plan = %Efsql.Physical.Plan{plan | access: {:fan_out, []}}
     {single, _} = feed(model, [{:done, :query, {:ok, {plan, rows, %{}, 1}}}])
