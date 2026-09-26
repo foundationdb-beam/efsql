@@ -82,7 +82,7 @@ defmodule Efsql.Planner do
     {rows(logical, read), ops}
   end
 
-  defp rows(logical, read) do
+  defp rows(%Logical.Select{} = logical, read) do
     read = if read == :star, do: [], else: read -- [:_tenant]
 
     %Logical.Select{

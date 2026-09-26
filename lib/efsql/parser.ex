@@ -83,7 +83,7 @@ defmodule Efsql.Parser do
     raise Unsupported, "SELECT * can't be used with GROUP BY or aggregates; name the fields"
   end
 
-  defp grouped(logical, select) do
+  defp grouped(%Logical.Select{} = logical, select) do
     group_by = Enum.map(select.group_by, &group_field/1)
 
     {columns, aggregates} =

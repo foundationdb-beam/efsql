@@ -86,7 +86,18 @@ defmodule Efsql.Fanout do
               "(\\set tenant_batch 25), giving up the single snapshot"
     end
 
-    {rows, ops} = Planner.split(%Logical.Select{logical | predicates: row_preds})
+    {%Logical.Select{} = rows, ops} =
+      Planner.split(%Logical.Select{logical | predicates: row_preds})
+
+    # The executor gives every row its _tenant; drop it again unless selected.
+    # (A grouped query's rows only keep it as a group field, which split/1
+    # already projects away when it isn't selected.)
+    ops =
+      if logical.group_by == nil and is_list(logical.projection) and
+           :_tenant not in logical.projection and
+           not match?([{:project, _} | _], Enum.reverse(ops)),
+         do: ops ++ [{:project, logical.projection}],
+         else: ops
 
     {per_tenant, tenants} =
       Enum.map_reduce(names, tenants, fn name, tenants ->
