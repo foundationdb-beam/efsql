@@ -117,4 +117,16 @@ defmodule EfsqlTest.Integration.Planner do
     assert {:index_scan, %Ecto.Query{wheres: [%{expr: {:==, [], [_, "Alice"]}}]}, _opts} =
              plan.access
   end
+
+  test "the plan carries the select list's column order", context do
+    tenant_id = context[:tenant_id]
+
+    assert plan("select notes, name, id, name from #{tenant_id}.users;").columns ==
+             [:notes, :name, :id]
+
+    assert plan("select * from #{tenant_id}.users;").columns == nil
+
+    grouped = "select count(*) as n, notes from #{tenant_id}.users group by notes order by n;"
+    assert plan(grouped).columns == [:n, :notes]
+  end
 end

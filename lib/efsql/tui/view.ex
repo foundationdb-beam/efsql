@@ -365,7 +365,7 @@ defmodule Efsql.Tui.View do
   # -- inspector --
 
   defp inspector(%Model{irow: row} = model, height, cols) do
-    fields = row |> Map.keys() |> Enum.sort()
+    fields = App.inspector_fields(model)
     selected = Enum.at(fields, model.ifield_cursor)
 
     list =
