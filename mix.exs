@@ -31,7 +31,12 @@ defmodule Efsql.MixProject do
   def application do
     [
       mod: {Efsql.Application, []},
-      extra_applications: [:logger]
+      extra_applications: [:logger],
+      # efsql uses only sql's lexer and parser, which need no running
+      # process. Including the app loads its code without starting its
+      # database client runtime (a :dets file in its priv dir, a startup
+      # sleep, and a stop/1 that crashes when no pool ever started).
+      included_applications: [:sql]
     ]
   end
 

@@ -12,9 +12,7 @@ defmodule Efsql.Tui.Session do
   end
 
   def qall(sql, %{tenant: tenant, tenants: tenants}) do
-    {:ok, context, tokens} = SQL.Lexer.lex(sql)
-    {:ok, _context, parsed} = SQL.Parser.parse(tokens, context)
-    logical = %Efsql.Logical.Select{} = Efsql.Parser.to_logical(parsed)
+    logical = %Efsql.Logical.Select{} = Efsql.Parser.sql_to_logical(sql)
 
     {logical, tenants} =
       case logical.prefix do

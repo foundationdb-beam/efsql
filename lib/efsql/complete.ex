@@ -14,7 +14,7 @@ defmodule Efsql.Complete do
 
   @statement_start ~w(select)
   @post_expr ~w(and order limit)
-  @operators ~w(= > >= < <= like in between not)
+  @operators ~w(= > >= < <= like in between not is)
 
   def complete(input, context) do
     {word_start, word} = current_word(input)
@@ -33,8 +33,17 @@ defmodule Efsql.Complete do
 
   defp candidates_for([], _context, _tokens), do: @statement_start
 
-  defp candidates_for([last | _], context, tokens) do
+  defp candidates_for([last | earlier], context, tokens) do
     cond do
+      last == "is" ->
+        ~w(null not)
+
+      last == "not" and List.first(earlier) == "is" ->
+        ~w(null)
+
+      last == "null" ->
+        @post_expr
+
       last == "select" or last == "," ->
         fields(context, tokens) ++ ["*"]
 

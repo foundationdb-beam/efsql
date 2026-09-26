@@ -4,13 +4,22 @@ defmodule Efsql.Executor do
   then folds the operator pipeline over them.
 
   SQL NULL semantics: a comparison, LIKE, or IN against a NULL (nil) field is
-  false — including NOT LIKE. Sorting places NULLs last ascending and first
-  descending, matching PostgreSQL's defaults.
+  false — including NOT LIKE. IS NULL matches a nil or absent field. Sorting places NULLs last ascending and first
+  descending, matching PostgreSQL's defaults. Values compare with
+  `Efsql.Types.compare/2`, so datetimes order chronologically.
   """
 
   alias Efsql.Physical.Plan
+  alias Efsql.Types
 
   @cmp_ops ~w[== > >= < <=]a
+  @cmp_results %{
+    ==: [:eq],
+    >: [:gt],
+    >=: [:gt, :eq],
+    <: [:lt],
+    <=: [:lt, :eq]
+  }
 
   def run(%Plan{access: access, ops: ops}) do
     Enum.reduce(ops, fetch(access), &apply_op/2)
@@ -72,7 +81,7 @@ defmodule Efsql.Executor do
   defp eval({:cmp, op, field, param}, row) when op in @cmp_ops do
     case Map.get(row, field) do
       nil -> false
-      value -> apply(Kernel, op, [value, param])
+      value -> Types.compare(value, param) in Map.fetch!(@cmp_results, op)
     end
   end
 
@@ -83,9 +92,12 @@ defmodule Efsql.Executor do
   defp eval({:in, field, values}, row) do
     case Map.get(row, field) do
       nil -> false
-      value -> value in values
+      value -> Enum.any?(values, &(Types.compare(value, &1) == :eq))
     end
   end
+
+  defp eval({:is_null, field}, row), do: Map.get(row, field) == nil
+  defp eval({:not_null, field}, row), do: Map.get(row, field) != nil
 
   defp eval({:like, field, pattern}, row) do
     case Map.get(row, field) do
@@ -117,10 +129,20 @@ defmodule Efsql.Executor do
 
   defp compare(a, b, [{dir, field} | rest]) do
     case {Map.get(a, field), Map.get(b, field)} do
-      {v, v} -> compare(a, b, rest)
-      {nil, _} -> if dir == :asc, do: :gt, else: :lt
-      {_, nil} -> if dir == :asc, do: :lt, else: :gt
-      {va, vb} -> order(if(va < vb, do: :lt, else: :gt), dir)
+      {v, v} ->
+        compare(a, b, rest)
+
+      {nil, _} ->
+        if dir == :asc, do: :gt, else: :lt
+
+      {_, nil} ->
+        if dir == :asc, do: :lt, else: :gt
+
+      {va, vb} ->
+        case Types.compare(va, vb) do
+          :eq -> compare(a, b, rest)
+          cmp -> order(cmp, dir)
+        end
     end
   end
 

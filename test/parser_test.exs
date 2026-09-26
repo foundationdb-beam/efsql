@@ -1,14 +1,11 @@
 defmodule Efsql.ParserTest do
   use ExUnit.Case, async: true
 
+  alias Efsql.Exception.Unsupported
   alias Efsql.Logical
   alias Efsql.Parser
 
-  defp parse(sql) do
-    {:ok, context, tokens} = SQL.Lexer.lex(sql)
-    {:ok, _context, parsed} = SQL.Parser.parse(tokens, context)
-    Parser.to_logical(parsed)
-  end
+  defp parse(sql), do: Parser.sql_to_logical(sql)
 
   describe "select" do
     test "single field" do
@@ -112,6 +109,206 @@ defmodule Efsql.ParserTest do
 
       assert %Logical.Select{predicates: [{:in, :qty, [1, 2, 3]}]} =
                parse("select id from t.users where qty in (1, 2, 3);")
+    end
+
+    test "atom literal" do
+      assert %Logical.Select{predicates: [{:cmp, :==, :status, :active}]} =
+               parse("select id from t.users where status = 'active'::atom;")
+
+      assert %Logical.Select{predicates: [{:cmp, :==, :status, :active}]} =
+               parse("select id from t.users where status = cast('active' as atom);")
+
+      assert %Logical.Select{predicates: [{:cmp, :==, :status, :active}]} =
+               parse("select id from t.users where status = 'active'::ATOM;")
+    end
+
+    test "atom literal is distinct from a string" do
+      assert %Logical.Select{predicates: [{:cmp, :==, :status, "active"}]} =
+               parse("select id from t.users where status = 'active';")
+    end
+
+    test "atom literal keeps case and module names" do
+      assert %Logical.Select{predicates: [{:cmp, :==, :kind, Foo.Bar}]} =
+               parse("select id from t.users where kind = 'Elixir.Foo.Bar'::atom;")
+    end
+
+    test "atom literals in compound predicates" do
+      assert %Logical.Select{
+               predicates: [{:cmp, :==, :status, :active}, {:cmp, :==, :name, "Alice"}]
+             } =
+               parse("select id from t.users where status = 'active'::atom and name = 'Alice';")
+
+      assert %Logical.Select{predicates: [{:in, :status, [:active, :pending]}]} =
+               parse("select id from t.users where status in ('active'::atom, 'pending'::atom);")
+
+      assert %Logical.Select{predicates: [{:cmp, :>=, :status, :a}, {:cmp, :<, :status, :m}]} =
+               parse("select id from t.users where status >= 'a'::atom and status < 'm'::atom;")
+    end
+
+    test "timestamp literal is a NaiveDateTime" do
+      assert %Logical.Select{predicates: [{:cmp, :>=, :at, ~N[2024-03-01 12:34:56]}]} =
+               parse("select id from t.users where at >= '2024-03-01 12:34:56'::timestamp;")
+
+      assert %Logical.Select{predicates: [{:cmp, :>=, :at, ~N[2024-03-01 12:34:56.123456]}]} =
+               parse(
+                 "select id from t.users where at >= '2024-03-01T12:34:56.123456'::timestamp;"
+               )
+
+      assert %Logical.Select{predicates: [{:cmp, :>=, :at, ~N[2024-03-01 00:00:00]}]} =
+               parse("select id from t.users where at >= cast('2024-03-01' as timestamp);")
+
+      assert %Logical.Select{predicates: [{:cmp, :>=, :at, ~N[2024-03-01 12:34:56]}]} =
+               parse("select id from t.users where at >= '2024-03-01 12:34:56'::naive_datetime;")
+    end
+
+    test "timestamp literal rejects a time zone offset" do
+      assert_raise Unsupported, ~r/use timestamptz/, fn ->
+        parse("select id from t.users where at >= '2024-03-01 12:34:56Z'::timestamp;")
+      end
+    end
+
+    test "timestamptz literal is a UTC DateTime" do
+      assert %Logical.Select{predicates: [{:cmp, :>=, :at, ~U[2024-03-01 12:34:56Z]}]} =
+               parse("select id from t.users where at >= '2024-03-01 12:34:56Z'::timestamptz;")
+
+      assert %Logical.Select{predicates: [{:cmp, :>=, :at, ~U[2024-03-01 10:34:56Z]}]} =
+               parse(
+                 "select id from t.users where at >= '2024-03-01T12:34:56+02:00'::timestamptz;"
+               )
+
+      assert %Logical.Select{predicates: [{:cmp, :>=, :at, ~U[2024-03-01 12:34:56Z]}]} =
+               parse("select id from t.users where at >= '2024-03-01 12:34:56'::utc_datetime;")
+
+      assert %Logical.Select{predicates: [{:cmp, :<, :at, ~U[2024-03-01 00:00:00Z]}]} =
+               parse("select id from t.users where at < '2024-03-01'::timestamptz;")
+    end
+
+    test "date literal is a Date" do
+      assert %Logical.Select{predicates: [{:cmp, :==, :day, ~D[2024-03-01]}]} =
+               parse("select id from t.users where day = '2024-03-01'::date;")
+
+      assert %Logical.Select{predicates: [{:in, :day, [~D[2024-03-01], ~D[2024-03-02]]}]} =
+               parse(
+                 "select id from t.users where day in (cast('2024-03-01' as date), '2024-03-02'::date);"
+               )
+    end
+
+    test "time literal is a Time" do
+      assert %Logical.Select{predicates: [{:cmp, :>=, :at, ~T[12:34:56]}]} =
+               parse("select id from t.users where at >= '12:34:56'::time;")
+
+      assert %Logical.Select{predicates: [{:cmp, :>=, :at, ~T[12:34:56.123456]}]} =
+               parse("select id from t.users where at >= '12:34:56.123456'::time;")
+    end
+
+    test "malformed date and time raise" do
+      assert_raise Unsupported, ~r/Cannot cast "2024-02-30" to date/, fn ->
+        parse("select id from t.users where day = '2024-02-30'::date;")
+      end
+
+      assert_raise Unsupported, ~r/Cannot cast "25:00:00" to time/, fn ->
+        parse("select id from t.users where at = '25:00:00'::time;")
+      end
+    end
+
+    test "malformed timestamp raises" do
+      assert_raise Unsupported, ~r/Cannot cast "yesterday" to timestamp/, fn ->
+        parse("select id from t.users where at >= 'yesterday'::timestamp;")
+      end
+    end
+
+    test "unknown type raises" do
+      assert_raise Unsupported, ~r/Unknown type 'widget'/, fn ->
+        parse("select id from t.users where status = 'active'::widget;")
+      end
+    end
+
+    test "atom cast of a non-string raises" do
+      assert_raise Unsupported, ~r/Cannot cast 1 to atom/, fn ->
+        parse("select id from t.users where status = 1::atom;")
+      end
+    end
+
+    test "like on an atom raises" do
+      assert_raise Unsupported, fn ->
+        parse("select id from t.users where status like 'a%'::atom;")
+      end
+    end
+
+    test "is null and is not null" do
+      assert %Logical.Select{predicates: [{:is_null, :notes}]} =
+               parse("select id from t.users where notes is null;")
+
+      assert %Logical.Select{predicates: [{:not_null, :notes}]} =
+               parse("select id from t.users where notes is not null;")
+
+      assert %Logical.Select{predicates: [{:is_null, :notes}]} =
+               parse("select id from t.users where notes isnull;")
+
+      assert %Logical.Select{predicates: [{:not_null, :notes}]} =
+               parse("select id from t.users where notes notnull;")
+    end
+
+    # The SQL library hangs on these without Efsql.Parser's token rewrite.
+    test "null tests combine with other predicates in any position" do
+      assert %Logical.Select{predicates: [{:cmp, :==, :name, "a"}, {:not_null, :notes}]} =
+               parse("select id from t.users where name = 'a' and notes is not null;")
+
+      assert %Logical.Select{predicates: [{:not_null, :notes}, {:cmp, :==, :name, "a"}]} =
+               parse("select id from t.users where notes is not null and name = 'a';")
+
+      assert %Logical.Select{
+               predicates: [{:is_null, :a}, {:not_null, :b}, {:cmp, :==, :c, "x"}]
+             } = parse("select id from t.users where a is null and b notnull and c = 'x';")
+
+      assert %Logical.Select{predicates: [{:cmp, :==, :c, "x"}, {:is_null, :a}]} =
+               parse("select id from t.users where c = 'x' and a isnull;")
+    end
+
+    test "comparison with null raises" do
+      assert_raise Unsupported, ~r/use IS NULL or IS NOT NULL/, fn ->
+        parse("select id from t.users where notes = null;")
+      end
+
+      assert_raise Unsupported, ~r/use IS NULL or IS NOT NULL/, fn ->
+        parse("select id from t.users where notes in ('a', null);")
+      end
+    end
+
+    test "the primary key is never null" do
+      assert_raise Unsupported, ~r/never NULL/, fn ->
+        parse("select id from t.users where _ is null;")
+      end
+    end
+
+    # The SQL library hangs or misparses on these without the token
+    # rewrite in Efsql.Parser.parse/1.
+    test "columns named after reserved words" do
+      assert %Logical.Select{predicates: [{:cmp, :==, :day, "x"}]} =
+               parse("select id from t.users where day = 'x';")
+
+      assert %Logical.Select{predicates: [{:cmp, :==, :x, "a"}, {:cmp, :>=, :at, 1}]} =
+               parse("select id from t.users where x = 'a' and at >= 1;")
+
+      assert %Logical.Select{
+               predicates: [
+                 {:in, :day, ["a"]},
+                 {:like, :user, "a%"},
+                 {:not_like, :value, "b%"},
+                 {:range, :year, {:>=, 1}, {:<=, 2}}
+               ]
+             } =
+               parse(
+                 "select id from t.users where day in ('a') and user like 'a%' and value not like 'b%' and year between 1 and 2;"
+               )
+
+      assert %Logical.Select{predicates: [{:is_null, :day}, {:not_null, :at}]} =
+               parse("select id from t.users where day is null and at is not null;")
+    end
+
+    test "reserved-word columns keep their sort direction" do
+      assert %Logical.Select{order: [desc: :day, asc: :user]} =
+               parse("select id from t.users order by day desc, user asc;")
     end
 
     test "versionstamp partition scan value" do

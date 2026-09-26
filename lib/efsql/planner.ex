@@ -22,6 +22,7 @@ defmodule Efsql.Planner do
   alias Efsql.Exception.Unsupported
   alias Efsql.Logical
   alias Efsql.Physical.Plan
+  alias Efsql.Types
   alias EctoFoundationDB.Layer.Metadata
 
   @pk_field :_
@@ -201,6 +202,8 @@ defmodule Efsql.Planner do
   defp kind({:in, _field, _values}), do: :in
   defp kind({:like, _field, _pattern}), do: :residual
   defp kind({:not_like, _field, _pattern}), do: :residual
+  defp kind({:is_null, _field}), do: :residual
+  defp kind({:not_null, _field}), do: :residual
   defp kind({:cmp, _op, @pk_field, _value}), do: :pk
   defp kind({:range, @pk_field, _lower, _upper}), do: :pk
   defp kind({:cmp, _op, _field, _value}), do: :pushable
@@ -386,11 +389,12 @@ defmodule Efsql.Planner do
   end
 
   defp pred_to_expr({:cmp, op, field, value}) do
-    {op, [], [field_ref(field), value]}
+    {op, [], [field_ref(field), Types.index_key(value)]}
   end
 
   defp pred_to_expr({:range, field, {lower_op, lower}, {upper_op, upper}}) do
-    {{lower_op, [], [field_ref(field), lower]}, {upper_op, [], [field_ref(field), upper]}}
+    {{lower_op, [], [field_ref(field), Types.index_key(lower)]},
+     {upper_op, [], [field_ref(field), Types.index_key(upper)]}}
   end
 
   defp pred_to_expr(pred) do
