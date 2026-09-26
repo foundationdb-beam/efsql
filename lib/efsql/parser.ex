@@ -54,9 +54,13 @@ defmodule Efsql.Parser do
     [{:null, meta, []} | normalize_tokens([{:is, is_meta, []} | rest])]
   end
 
-  defp normalize_tokens([{follower, _, _} = token, {word, meta, []} | rest])
-       when follower in @column_followers and word not in @not_columns do
-    if meta[:type] == :reserved do
+  defp normalize_tokens([{tag, meta, data} | rest]) when tag in ~w[paren bracket brace]a do
+    [{tag, meta, normalize_tokens(data)} | normalize_tokens(rest)]
+  end
+
+  defp normalize_tokens([token, {word, meta, []} | rest])
+       when is_atom(word) and word not in @not_columns do
+    if column_follower?(token) and meta[:type] == :reserved do
       ident = {:ident, List.keyreplace(meta, :type, 0, {:type, :literal}), Atom.to_charlist(word)}
       [token | normalize_tokens([ident | rest])]
     else
@@ -64,12 +68,13 @@ defmodule Efsql.Parser do
     end
   end
 
-  defp normalize_tokens([{tag, meta, data} | rest]) when tag in ~w[paren bracket brace]a do
-    [{tag, meta, normalize_tokens(data)} | normalize_tokens(rest)]
-  end
-
   defp normalize_tokens([token | rest]), do: [token | normalize_tokens(rest)]
   defp normalize_tokens([]), do: []
+
+  # Non-reserved words such as asc and desc lex as identifiers carrying
+  # the word in their meta's :tag.
+  defp column_follower?({:ident, meta, _}), do: meta[:tag] in @column_followers
+  defp column_follower?({tag, _meta, _}), do: tag in @column_followers
 
   def to_logical(parsed) do
     parsed
