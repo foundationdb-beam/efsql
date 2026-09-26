@@ -96,6 +96,7 @@ defmodule Efsql.Tui.Help do
        [
          {:sql, "\\?          this help          \\plan   toggle plan"},
          {:sql, "\\set limit N  default row limit"},
+         {:sql, "\\set tenant_batch N|off  tenants per transaction for *.table"},
          "?  help          t  tenants        q  query editor",
          "r  resample      Enter  open/run   Esc  back",
          "Tab  complete, or with empty input jump to results",

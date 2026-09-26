@@ -209,8 +209,22 @@ each tenant, with that tenant's own indexes, and grouping, ordering and
 The tenants are read in a single FoundationDB transaction, so the result is
 one consistent snapshot. That also means the whole read has to finish within
 FoundationDB's five-second transaction limit; a query that reads too much
-says so, and a `_tenant` or `WHERE` condition narrows it. One query reads at
-most 100 tenants unless the `:efsql, :max_tenants` setting says otherwise.
+says so, and a `_tenant` or `WHERE` condition narrows it. One transaction
+reads at most 100 tenants unless the `:efsql, :max_tenants` setting says
+otherwise.
+
+When the tenants don't fit in one transaction, read them in batches:
+
+```
+\set tenant_batch 25
+```
+
+Each batch of 25 tenants is then its own transaction, and there is no
+tenant limit. Grouping, ordering and `LIMIT` still apply to all the rows
+together, but the result is no longer one snapshot: each batch sees the
+database at a slightly different moment, and the result says how many
+transactions it came from. `\set tenant_batch off` goes back to one
+transaction. (From Elixir, pass `tenant_batch: 25` to `Efsql.qall/3`.)
 
 ### Select rows
 

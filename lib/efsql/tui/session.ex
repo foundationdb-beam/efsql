@@ -13,8 +13,11 @@ defmodule Efsql.Tui.Session do
     sql
     |> Efsql.Parser.sql_to_logical()
     |> in_session(session)
-    |> Efsql.run_logical([], session.tenants)
+    |> Efsql.run_logical(options(session), session.tenants)
   end
+
+  defp options(%{tenant_batch: n}) when is_integer(n), do: [tenant_batch: n]
+  defp options(_session), do: []
 
   defp in_session(%Logical.Select{prefix: {:all_tenants, nil}} = logical, session),
     do: %Logical.Select{logical | prefix: {:all_tenants, session[:storage_id]}}

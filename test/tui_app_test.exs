@@ -202,6 +202,35 @@ defmodule Efsql.Tui.AppTest do
     assert model.columns == [:id, :age, :name]
   end
 
+  test "\\set tenant_batch sets and clears the tenants per transaction" do
+    model = %{activated() | mode: :query}
+
+    {model, _} = feed(model, chars("\\set tenant_batch 25") ++ [{:key, :enter}])
+    assert model.tenant_batch == 25
+    assert model.flash == {:info, "tenant_batch set to 25"}
+
+    {model, _} = feed(model, chars("\\set tenant_batch off") ++ [{:key, :enter}])
+    assert model.tenant_batch == nil
+
+    {model, _} = feed(model, chars("\\set tenant_batch 0") ++ [{:key, :enter}])
+    assert model.tenant_batch == nil
+    assert {:error, "usage: " <> _} = model.flash
+  end
+
+  test "results read in batches say they are not one snapshot" do
+    model = %{activated() | mode: :query}
+    rows = [%{name: "Alice", _tenant: "a"}, %{name: "Dora", _tenant: "b"}]
+    batches = {:batches, [{:fan_out, []}, {:fan_out, []}]}
+
+    plan = %Efsql.Physical.Plan{access: batches, ops: [], columns: [:name, :_tenant]}
+    {batched, _} = feed(model, [{:done, :query, {:ok, {plan, rows, %{}, 1}}}])
+    assert frame_text(batched) =~ "(2 rows, 1 ms) · 2 transactions, not one snapshot"
+
+    plan = %Efsql.Physical.Plan{plan | access: {:fan_out, []}}
+    {single, _} = feed(model, [{:done, :query, {:ok, {plan, rows, %{}, 1}}}])
+    refute frame_text(single) =~ "transactions"
+  end
+
   test "uuid primary keys are not truncated in results" do
     model = %{activated() | mode: :query}
     uuid = "00ab2aa8-2bba-4102-bf8c-ced5d3142f8a"

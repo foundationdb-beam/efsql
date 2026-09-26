@@ -52,6 +52,9 @@ defmodule Efsql.Executor do
     Efsql.Repo.all_from_source(query, options)
   end
 
+  # One transaction per batch, one after another.
+  defp fetch({:batches, batches}), do: Enum.flat_map(batches, &fetch/1)
+
   defp fetch({:fan_out, []}), do: []
 
   defp fetch({:fan_out, tenant_plans}) do
@@ -98,7 +101,8 @@ defmodule Efsql.Executor do
           raise Unsupported,
                 "the query read too much to finish in one transaction across " <>
                   "#{length(tenant_plans)} tenants; narrow it with a condition on _tenant " <>
-                  "or the WHERE clause"
+                  "or the WHERE clause, or read fewer tenants per transaction " <>
+                  "(\\set tenant_batch N)"
 
         _ ->
           reraise e, __STACKTRACE__
