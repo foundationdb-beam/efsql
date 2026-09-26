@@ -42,7 +42,7 @@ defmodule Efsql.MixProject do
       # advance them together.
       {:ecto, "~> 3.13.0"},
       {:ex_fdbmonitor, github: "foundationdb-beam/ex_fdbmonitor", only: :dev, runtime: false},
-      {:sql, "~> 0.5.0"},
+      {:sql, github: "elixir-dbvisor/sql"},
       {:owl, "~> 0.13"}
     ]
   end
