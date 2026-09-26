@@ -68,6 +68,15 @@ defmodule Efsql.Tui.Help do
          {:sql, "select id from users order by city asc, name desc;"},
          {:note, "efsql sorts after reading unless an index can serve the order"}
        ]},
+      {"Grouping",
+       [
+         {:sql, "select count(*) from users;"},
+         {:sql, "select city, count(*) as n from users group by city;"},
+         {:sql, "select status, sum(total) from orders group by status;"},
+         {:sql, "select city from users group by city order by count(*) desc;"},
+         "Aggregates: count(*), count(f), sum, min, max, avg.",
+         {:note, "selected fields must be grouped; having is not supported"}
+       ]},
       {"How a query runs",
        [
          "Constraints an index or the key can answer are pushed to",

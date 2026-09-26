@@ -24,18 +24,125 @@ defmodule Efsql.Parser do
   def to_logical(%AST.Select{} = select) do
     {prefix, source} = split_from(select.from)
 
-    %Logical.Select{
-      projection: projection(select.fields),
+    logical = %Logical.Select{
       source: source,
       prefix: prefix,
       predicates: predicates(select.where),
-      order: Enum.map(select.order_by, fn {name, dir} -> {dir, field(name)} end),
       limit: select.limit
     }
+
+    if grouped?(select),
+      do: grouped(logical, select),
+      else: %Logical.Select{
+        logical
+        | projection: projection(select.fields),
+          order: Enum.map(select.order_by, fn {name, dir} -> {dir, field(name)} end)
+      }
   end
 
   defp projection(:star), do: :star
   defp projection(fields), do: Enum.map(fields, &field/1)
+
+  # -- GROUP BY and aggregates --
+
+  @aggregates ~w[count sum min max avg]
+
+  defp grouped?(%AST.Select{fields: fields, group_by: group_by, order_by: order_by}) do
+    group_by != [] or
+      (is_list(fields) and Enum.any?(fields, &aggregate?/1)) or
+      Enum.any?(order_by, fn {key, _dir} -> aggregate?(key) end)
+  end
+
+  defp aggregate?(item), do: match?({:aggregate, _, _, _}, item)
+
+  # Every selected name must be a group field; ORDER BY may also name an
+  # aggregate or its alias. An aggregate only in ORDER BY is computed, then
+  # projected away.
+  defp grouped(_logical, %AST.Select{fields: :star}) do
+    raise Unsupported, "SELECT * can't be used with GROUP BY or aggregates; name the fields"
+  end
+
+  defp grouped(logical, select) do
+    group_by = Enum.map(select.group_by, &group_field/1)
+
+    {columns, aggregates} =
+      Enum.map_reduce(select.fields, [], fn
+        {:aggregate, _, _, _} = call, aggregates ->
+          {name, aggregate} = aggregate(call)
+          {name, aggregates ++ [aggregate]}
+
+        name, aggregates ->
+          field = field(name)
+
+          unless field in group_by do
+            raise Unsupported,
+                  "#{name} must be in GROUP BY or used in an aggregate (count, sum, ...)"
+          end
+
+          {field, aggregates}
+      end)
+
+    {order, aggregates} =
+      Enum.map_reduce(select.order_by, aggregates, fn
+        {{:aggregate, _, _, _} = call, dir}, aggregates ->
+          {name, {_, function, arg} = aggregate} = aggregate(call)
+
+          case Enum.find(aggregates, &match?({_, ^function, ^arg}, &1)) do
+            {existing, _, _} -> {{dir, existing}, aggregates}
+            nil -> {{dir, name}, aggregates ++ [aggregate]}
+          end
+
+        {name, dir}, aggregates ->
+          field = field(name)
+          named = Enum.map(aggregates, &elem(&1, 0))
+
+          unless field in group_by or field in named do
+            raise Unsupported,
+                  "ORDER BY #{name} must name a GROUP BY field, an aggregate or its alias"
+          end
+
+          {{dir, field}, aggregates}
+      end)
+
+    %Logical.Select{
+      logical
+      | projection: columns,
+        order: order,
+        group_by: group_by,
+        aggregates: aggregates
+    }
+  end
+
+  defp group_field("_"),
+    do: raise(Unsupported, "GROUP BY '_' is not supported; use the primary key field name")
+
+  defp group_field(name), do: field(name)
+
+  defp aggregate({:aggregate, function, arg, alias}) do
+    unless function in @aggregates do
+      raise Unsupported,
+            "#{function}() is not supported; the aggregates are #{Enum.join(@aggregates, ", ")}"
+    end
+
+    arg =
+      case arg do
+        :star when function == "count" ->
+          :star
+
+        :star ->
+          raise Unsupported, "only count takes *; #{function} needs a field"
+
+        "_" ->
+          raise Unsupported,
+                "#{function}('_') is not supported; use the primary key field name"
+
+        name ->
+          field(name)
+      end
+
+    name = field(alias || "#{function}(#{if arg == :star, do: "*", else: arg})")
+    {name, {name, String.to_atom(function), arg}}
+  end
 
   defp split_from([table]), do: {nil, table}
   defp split_from([tenant, table]), do: {tenant, table}

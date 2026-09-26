@@ -13,17 +13,26 @@ defmodule Efsql.SQL.AST do
     @moduledoc "A `SELECT` statement."
 
     @type t :: %__MODULE__{
-            fields: :star | [String.t()],
+            fields: :star | [String.t() | Efsql.SQL.AST.aggregate()],
             from: [String.t(), ...],
             where: Efsql.SQL.AST.expr() | nil,
-            order_by: [{String.t(), :asc | :desc}],
+            group_by: [String.t()],
+            order_by: [{String.t() | Efsql.SQL.AST.aggregate(), :asc | :desc}],
             limit: non_neg_integer() | nil
           }
 
     # `from` holds the dotted name's parts: [table], [tenant, table] or
     # [storage_id, tenant, table].
-    defstruct fields: :star, from: [], where: nil, order_by: [], limit: nil
+    defstruct fields: :star, from: [], where: nil, group_by: [], order_by: [], limit: nil
   end
+
+  @typedoc """
+  An aggregate call in the select list or ORDER BY:
+  `{:aggregate, function, argument, alias}`. The function is any lower-case
+  name (`count`, `sum`, ...), the argument a field name or `:star`, and the
+  alias the `AS` name or `nil`.
+  """
+  @type aggregate :: {:aggregate, String.t(), String.t() | :star, String.t() | nil}
 
   @typedoc """
   An expression.

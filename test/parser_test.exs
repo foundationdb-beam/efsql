@@ -327,6 +327,69 @@ defmodule Efsql.ParserTest do
     end
   end
 
+  describe "group by" do
+    test "group fields and aggregates become output columns" do
+      assert %Logical.Select{
+               projection: [:notes, :"count(*)", :total],
+               group_by: [:notes],
+               aggregates: [{:"count(*)", :count, :star}, {:total, :sum, :price}]
+             } = parse("select notes, count(*), sum(price) as total from t.users group by notes;")
+    end
+
+    test "an aggregate without GROUP BY is one group over every row" do
+      assert %Logical.Select{group_by: [], aggregates: [{:"max(name)", :max, :name}]} =
+               parse("select max(name) from t.users;")
+    end
+
+    test "every aggregate function" do
+      assert %Logical.Select{aggregates: aggregates} =
+               parse("select count(a), sum(a), min(a), max(a), avg(a) from t.users;")
+
+      assert Enum.map(aggregates, &elem(&1, 1)) == [:count, :sum, :min, :max, :avg]
+    end
+
+    test "ORDER BY names a group field, an aggregate or its alias" do
+      assert %Logical.Select{order: [desc: :n, asc: :notes, desc: :"max(name)"]} =
+               parse(
+                 "select notes, count(*) as n, max(name) from t.users group by notes " <>
+                   "order by n desc, notes, max(name) desc;"
+               )
+    end
+
+    test "an aggregate only in ORDER BY is computed and projected away" do
+      assert %Logical.Select{
+               projection: [:notes],
+               aggregates: [{:"count(*)", :count, :star}],
+               order: [desc: :"count(*)"]
+             } = parse("select notes from t.users group by notes order by count(*) desc;")
+    end
+
+    test "the same aggregate in ORDER BY is the selected one, alias included" do
+      assert %Logical.Select{aggregates: [{:n, :count, :star}], order: [desc: :n]} =
+               parse("select count(*) as n from t.users order by count(*) desc;")
+    end
+
+    test "WHERE and LIMIT carry over" do
+      assert %Logical.Select{predicates: [{:cmp, :==, :name, "x"}], limit: 5} =
+               parse("select count(*) from t.users where name = 'x' limit 5;")
+    end
+
+    test "grouping errors say what is wrong" do
+      for {sql, message} <- [
+            {"select name, count(*) from t.users", "name must be in GROUP BY"},
+            {"select name from t.users group by notes", "name must be in GROUP BY"},
+            {"select * from t.users group by name", "SELECT * can't be used with GROUP BY"},
+            {"select count(*) from t.users order by name", "ORDER BY name must name"},
+            {"select lower(name) from t.users", "lower() is not supported"},
+            {"select sum(*) from t.users", "only count takes *"},
+            {"select count(_) from t.users", "count('_') is not supported"},
+            {"select count(*) from t.users group by _", "GROUP BY '_' is not supported"}
+          ] do
+        assert_raise Unsupported, ~r/#{Regex.escape(message)}/, fn -> parse(sql) end
+      end
+    end
+  end
+
   describe "limit" do
     test "limit" do
       assert %Logical.Select{limit: 2} = parse("select id from t.users limit 2;")
