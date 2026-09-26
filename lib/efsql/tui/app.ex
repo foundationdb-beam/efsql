@@ -26,9 +26,7 @@ defmodule Efsql.Tui.App do
               mode: :navigator,
               flash: nil,
               busy: nil,
-              limit: 15,
-              # tenants per transaction for *.table queries; nil is one transaction
-              tenant_batch: nil,
+              settings: %Efsql.Settings{},
               cluster_file: nil,
               # navigator
               nav_path: [],
@@ -234,21 +232,7 @@ defmodule Efsql.Tui.App do
 
   defp activate(model, storage_id, tenant_id) do
     fun = fn ->
-      Discover.ensure_storage_cache(storage_id)
-      db = Ecto.Adapters.FoundationDB.db(Efsql.Repo)
-      config = Keyword.put(Efsql.Repo.config(), :storage_id, storage_id)
-
-      unless EctoFoundationDB.Tenant.Backend.exists?(db, tenant_id, config) do
-        raise "Tenant '#{tenant_id}' does not exist"
-      end
-
-      # migrate: false — see Efsql.resolve_tenant/2; the TUI never writes.
-      tenant =
-        EctoFoundationDB.Tenant.open(Efsql.Repo, tenant_id,
-          storage_id: storage_id,
-          migrate: false
-        )
-
+      {tenant, _tenants} = Efsql.open_tenant(%{}, tenant_id, storage_id, check_exists: true)
       {storage_id, tenant_id, tenant}
     end
 
@@ -286,7 +270,7 @@ defmodule Efsql.Tui.App do
     with source when source != nil <- current_source(model),
          %Discover.Schema{fields: fields} <- model.schemas[source],
          %{name: field} <- Enum.at(fields, model.field_cursor) do
-      input = "select #{field} from #{source} limit #{model.limit};"
+      input = "select #{field} from #{source} limit #{model.settings.limit};"
       {%{model | mode: :query, input: input, qcursor: String.length(input), qfocus: :input}, []}
     else
       _ -> {model, []}
@@ -436,11 +420,8 @@ defmodule Efsql.Tui.App do
       "\\plan" ->
         {%{model | show_plan?: not model.show_plan?, input: "", qcursor: 0}, []}
 
-      "\\set limit " <> n ->
-        set_limit(model, n)
-
-      "\\set tenant_batch " <> n ->
-        set_tenant_batch(model, n)
+      "\\set " <> text ->
+        set(model, text)
 
       sql ->
         run_query(model, sql)
@@ -449,29 +430,12 @@ defmodule Efsql.Tui.App do
 
   defp query(model, _msg), do: {model, []}
 
-  defp set_limit(model, n) do
-    case Integer.parse(String.trim(n)) do
-      {n, ""} when n > 0 ->
-        {%{model | limit: n, input: "", qcursor: 0, flash: {:info, "limit set to #{n}"}}, []}
+  defp set(model, text) do
+    model = %{model | input: "", qcursor: 0}
 
-      _ ->
-        {%{model | flash: {:error, "usage: \\set limit N"}, input: "", qcursor: 0}, []}
-    end
-  end
-
-  defp set_tenant_batch(model, n) do
-    case {String.trim(n), Integer.parse(String.trim(n))} do
-      {"off", _} ->
-        {%{model | tenant_batch: nil, input: "", qcursor: 0, flash: {:info, "tenant_batch off"}},
-         []}
-
-      {_, {n, ""}} when n > 0 ->
-        flash = {:info, "tenant_batch set to #{n}"}
-        {%{model | tenant_batch: n, input: "", qcursor: 0, flash: flash}, []}
-
-      _ ->
-        flash = {:error, "usage: \\set tenant_batch N|off"}
-        {%{model | flash: flash, input: "", qcursor: 0}, []}
+    case Efsql.Settings.set(model.settings, text) do
+      {:ok, settings, message} -> {%{model | settings: settings, flash: {:info, message}}, []}
+      {:error, usage} -> {%{model | flash: {:error, usage}}, []}
     end
   end
 
@@ -482,7 +446,7 @@ defmodule Efsql.Tui.App do
       tenant: model.tenant,
       tenants: model.tenants,
       storage_id: model.storage_id,
-      tenant_batch: model.tenant_batch
+      settings: model.settings
     }
 
     fun = fn ->
@@ -788,7 +752,7 @@ defmodule Efsql.Tui.App do
   end
 
   defp done(model, :query, {:ok, {plan, rows, tenants, elapsed}}) do
-    columns = columns(plan, rows)
+    columns = Efsql.Render.columns(plan, rows)
     cells = render_cells(rows, columns)
 
     model = %{
@@ -811,17 +775,6 @@ defmodule Efsql.Tui.App do
   end
 
   defp done(model, _tag, _result), do: {%{model | busy: nil}, []}
-
-  defp columns(_plan, []), do: []
-
-  # In select-list order; `select *` has no list, so its fields are sorted
-  # with id first.
-  defp columns(%Efsql.Physical.Plan{columns: [_ | _] = columns}, _rows), do: columns
-
-  defp columns(_plan, rows) do
-    keys = rows |> Enum.flat_map(&Map.keys/1) |> Enum.uniq() |> Enum.sort()
-    if :id in keys, do: [:id | List.delete(keys, :id)], else: keys
-  end
 
   # Cells are rendered once here rather than per frame: a frame is painted on
   # every key press, and inspecting every visible value each time is what

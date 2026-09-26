@@ -277,6 +277,19 @@ defmodule Efsql.Render do
     end
   end
 
+  @doc """
+  A result's columns, in order: the select list's, from the plan, or for
+  `select *` (which has none) the rows' fields, `id` first and the rest
+  sorted.
+  """
+  def columns(_plan, []), do: []
+  def columns(%Efsql.Physical.Plan{columns: [_ | _] = columns}, _rows), do: columns
+
+  def columns(_plan, rows) do
+    keys = rows |> Enum.flat_map(&Map.keys/1) |> Enum.uniq() |> Enum.sort()
+    if :id in keys, do: [:id | List.delete(keys, :id)], else: keys
+  end
+
   @doc "Short name for a value's type, for schema discovery displays."
   def type_of(nil), do: :null
   def type_of(v) when is_boolean(v), do: :boolean

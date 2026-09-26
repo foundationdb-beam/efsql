@@ -16,7 +16,7 @@ defmodule Efsql.Tui.Session do
     |> Efsql.run_logical(options(session), session.tenants)
   end
 
-  defp options(%{tenant_batch: n}) when is_integer(n), do: [tenant_batch: n]
+  defp options(%{settings: settings}), do: Efsql.Settings.query_options(settings)
   defp options(_session), do: []
 
   defp in_session(%Logical.Select{prefix: {:all_tenants, nil}} = logical, session),

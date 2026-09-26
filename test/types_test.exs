@@ -65,4 +65,21 @@ defmodule Efsql.TypesTest do
       assert Types.index_key(:active) == :active
     end
   end
+
+  test "equality_key is equal exactly when compare/2 says equal" do
+    pairs = [
+      {Decimal.new("1.0"), Decimal.new("1.00")},
+      {~N[2024-01-01 00:00:00], ~N[2024-01-01 00:00:00.000000]},
+      {~U[2024-01-01 00:00:00Z], ~U[2024-01-01 00:00:00.000Z]},
+      {~T[09:30:00], ~T[09:30:00.000000]}
+    ]
+
+    for {a, b} <- pairs do
+      assert Types.compare(a, b) == :eq
+      assert Types.equality_key(a) == Types.equality_key(b)
+    end
+
+    refute Types.equality_key(Decimal.new("1.0")) == Types.equality_key(Decimal.new("1.1"))
+    assert Types.equality_key("x") == "x"
+  end
 end

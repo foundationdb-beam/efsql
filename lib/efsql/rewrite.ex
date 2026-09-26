@@ -28,7 +28,7 @@ defmodule Efsql.Rewrite do
 
   defp merge_ranges([{:cmp, op, field, value} | rest], acc) when op in @lower_ops do
     case take_bound(rest, field, @upper_ops) do
-      nil ->
+      {nil, _} ->
         merge_ranges(rest, [{:cmp, op, field, value} | acc])
 
       {{:cmp, op2, _f, value2}, rest2} ->
@@ -38,7 +38,7 @@ defmodule Efsql.Rewrite do
 
   defp merge_ranges([{:cmp, op, field, value} | rest], acc) when op in @upper_ops do
     case take_bound(rest, field, @lower_ops) do
-      nil ->
+      {nil, _} ->
         merge_ranges(rest, [{:cmp, op, field, value} | acc])
 
       {{:cmp, op2, _f, value2}, rest2} ->
@@ -49,15 +49,10 @@ defmodule Efsql.Rewrite do
   defp merge_ranges([pred | rest], acc), do: merge_ranges(rest, [pred | acc])
 
   defp take_bound(preds, field, ops) do
-    match? = fn
+    Logical.take_first(preds, fn
       {:cmp, op, f, _v} -> op in ops and f == field
       _ -> false
-    end
-
-    case Enum.split_while(preds, &(not match?.(&1))) do
-      {_before, []} -> nil
-      {before, [match | rest]} -> {match, before ++ rest}
-    end
+    end)
   end
 
   # `field like 'prefix%'` is exactly a key range. A pattern with a wildcard

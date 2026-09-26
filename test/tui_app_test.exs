@@ -206,14 +206,14 @@ defmodule Efsql.Tui.AppTest do
     model = %{activated() | mode: :query}
 
     {model, _} = feed(model, chars("\\set tenant_batch 25") ++ [{:key, :enter}])
-    assert model.tenant_batch == 25
+    assert model.settings.tenant_batch == 25
     assert model.flash == {:info, "tenant_batch set to 25"}
 
     {model, _} = feed(model, chars("\\set tenant_batch off") ++ [{:key, :enter}])
-    assert model.tenant_batch == nil
+    assert model.settings.tenant_batch == nil
 
     {model, _} = feed(model, chars("\\set tenant_batch 0") ++ [{:key, :enter}])
-    assert model.tenant_batch == nil
+    assert model.settings.tenant_batch == nil
     assert {:error, "usage: " <> _} = model.flash
   end
 

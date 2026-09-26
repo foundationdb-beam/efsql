@@ -132,4 +132,20 @@ defmodule Efsql.RenderTest do
     assert String.length(Render.cell(uri, 30)) <= 30
     assert Render.full(uri) =~ "scheme:"
   end
+
+  describe "columns" do
+    test "follow the select list" do
+      plan = %Efsql.Physical.Plan{columns: [:name, :id]}
+      assert Render.columns(plan, [%{id: 1, name: "a"}]) == [:name, :id]
+    end
+
+    test "for select *, the rows' fields with id first" do
+      rows = [%{name: "a", id: 1}, %{id: 2, age: 3}]
+      assert Render.columns(%Efsql.Physical.Plan{}, rows) == [:id, :age, :name]
+    end
+
+    test "no rows, no columns" do
+      assert Render.columns(%Efsql.Physical.Plan{columns: [:a]}, []) == []
+    end
+  end
 end

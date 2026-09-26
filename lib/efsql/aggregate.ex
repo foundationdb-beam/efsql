@@ -25,7 +25,7 @@ defmodule Efsql.Aggregate do
   @spec run([map], [atom], [aggregate]) :: [map]
   def run(rows, group_by, aggregates) do
     rows
-    |> Enum.group_by(fn row -> Enum.map(group_by, &key(Map.get(row, &1))) end)
+    |> Enum.group_by(fn row -> Enum.map(group_by, &Types.equality_key(Map.get(row, &1))) end)
     |> ensure_one_group(group_by)
     |> Enum.map(fn {_key, rows} ->
       first = List.first(rows, %{})
@@ -35,19 +35,12 @@ defmodule Efsql.Aggregate do
         Map.put(acc, name, compute(function, arg, rows))
       end)
     end)
-    |> Enum.sort(&(compare_groups(&1, &2, group_by) != :gt))
+    |> Efsql.Executor.sort(Enum.map(group_by, &{:asc, &1}))
   end
 
   # A whole-table aggregate answers even when no row matched.
   defp ensure_one_group(groups, []) when groups == %{}, do: [{[], []}]
   defp ensure_one_group(groups, _group_by), do: Enum.to_list(groups)
-
-  # A term that is equal for values Types.compare/2 calls equal.
-  defp key(%Decimal{} = d), do: Decimal.normalize(d)
-  defp key(%NaiveDateTime{microsecond: {us, _}} = t), do: %{t | microsecond: {us, 6}}
-  defp key(%DateTime{microsecond: {us, _}} = t), do: %{t | microsecond: {us, 6}}
-  defp key(%Time{microsecond: {us, _}} = t), do: %{t | microsecond: {us, 6}}
-  defp key(value), do: value
 
   # -- aggregates --
 
@@ -105,28 +98,4 @@ defmodule Efsql.Aggregate do
   defp decimal(%Decimal{} = d), do: d
   defp decimal(n) when is_integer(n), do: Decimal.new(n)
   defp decimal(n) when is_float(n), do: Decimal.from_float(n)
-
-  # -- group order --
-
-  # By key, NULLs last, like an ascending ORDER BY.
-  defp compare_groups(_a, _b, []), do: :eq
-
-  defp compare_groups(a, b, [field | rest]) do
-    case {Map.get(a, field), Map.get(b, field)} do
-      {nil, nil} ->
-        compare_groups(a, b, rest)
-
-      {nil, _} ->
-        :gt
-
-      {_, nil} ->
-        :lt
-
-      {va, vb} ->
-        case Types.compare(va, vb) do
-          :eq -> compare_groups(a, b, rest)
-          cmp -> cmp
-        end
-    end
-  end
 end

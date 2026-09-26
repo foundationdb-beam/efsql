@@ -130,23 +130,6 @@ defmodule Efsql.Planner do
     end
   end
 
-  @doc """
-  A plain Ecto query with every predicate as a where clause, for callers
-  that hand the query to the adapter unplanned (e.g. `Repo.stream`).
-  """
-  def to_ecto_query(%Logical.Select{group_by: group_by}) when is_list(group_by),
-    do: raise(Unsupported, "GROUP BY and aggregates can't be streamed")
-
-  def to_ecto_query(%Logical.Select{} = logical) do
-    take = if logical.projection == :star, do: nil, else: logical.projection
-
-    base_query(logical)
-    |> put_select(take)
-    |> put_wheres(logical.predicates)
-    |> put_order(logical.order)
-    |> put_limit(logical.limit)
-  end
-
   # -- SELECT planning --
 
   defp plan_select(logical, options, pushables, residuals, indexes, star?) do
@@ -244,20 +227,18 @@ defmodule Efsql.Planner do
     end
   end
 
-  defp take_pred(preds, field, pred_fun) do
-    case Enum.split_while(preds, fn p ->
-           not (Logical.predicate_field(p) == field and pred_fun.(p))
-         end) do
-      {_before, []} -> {nil, preds}
-      {before, [match | rest]} -> {match, before ++ rest}
-    end
-  end
+  defp take_pred(preds, field, pred_fun),
+    do: Logical.take_first(preds, &(Logical.predicate_field(&1) == field and pred_fun.(&1)))
 
   defp range?({:range, _field, _lower, _upper}), do: true
   defp range?({:cmp, op, _field, _value}) when op in ~w[> >= < <=]a, do: true
   defp range?(_), do: false
 
-  defp load_indexes(%Logical.Select{tenant: tenant, source: source}) do
+  defp load_indexes(%Logical.Select{tenant: tenant, source: source}),
+    do: indexes(tenant, source)
+
+  @doc "A source's indexes, from the tenant's metadata, each with its `:id` and `:fields`."
+  def indexes(tenant, source) do
     Metadata.transactional(tenant, source, fn _tx, metadata -> metadata.indexes end)
   end
 

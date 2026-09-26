@@ -74,4 +74,14 @@ defmodule Efsql.RewriteTest do
       assert [{:in, :name, ["a", "b"]}] = normalize([{:in, :name, ["a", "b"]}])
     end
   end
+
+  test "Logical.take_first takes the first match out, keeping the rest in order" do
+    preds = [{:is_null, :a}, {:cmp, :>, :b, 1}, {:cmp, :>, :c, 2}]
+    gt? = &match?({:cmp, :>, _, _}, &1)
+
+    assert Efsql.Logical.take_first(preds, gt?) ==
+             {{:cmp, :>, :b, 1}, [{:is_null, :a}, {:cmp, :>, :c, 2}]}
+
+    assert Efsql.Logical.take_first(preds, fn _ -> false end) == {nil, preds}
+  end
 end

@@ -47,6 +47,17 @@ defmodule Efsql.Logical do
               aggregates: []
   end
 
+  @doc """
+  Takes the first predicate `fun` accepts out of `predicates`:
+  `{predicate, rest}`, or `{nil, predicates}` when none does.
+  """
+  def take_first(predicates, fun) do
+    case Enum.split_while(predicates, &(not fun.(&1))) do
+      {_before, []} -> {nil, predicates}
+      {before, [match | rest]} -> {match, before ++ rest}
+    end
+  end
+
   def predicate_field({:cmp, _op, field, _value}), do: field
   def predicate_field({:range, field, _lower, _upper}), do: field
   def predicate_field({:like, field, _pattern}), do: field

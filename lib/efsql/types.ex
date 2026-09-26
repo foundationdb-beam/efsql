@@ -103,6 +103,17 @@ defmodule Efsql.Types do
   end
 
   @doc """
+  A term that is equal exactly when `compare/2` calls two values equal,
+  for grouping: a `Decimal` 1.0 and 1.00 have the same key, as do
+  datetimes stored at different precisions.
+  """
+  def equality_key(%Decimal{} = d), do: Decimal.normalize(d)
+  def equality_key(%NaiveDateTime{microsecond: {us, _}} = t), do: %{t | microsecond: {us, 6}}
+  def equality_key(%DateTime{microsecond: {us, _}} = t), do: %{t | microsecond: {us, 6}}
+  def equality_key(%Time{microsecond: {us, _}} = t), do: %{t | microsecond: {us, 6}}
+  def equality_key(value), do: value
+
+  @doc """
   Orders two field values, `:lt`, `:eq` or `:gt`. Dates and times compare
   chronologically (term order would compare their struct fields, and term
   equality their precision), and a `Decimal` by value against another
