@@ -17,19 +17,11 @@ defmodule Efsql.Executor do
 
   alias Efsql.Exception.Unsupported
   alias Efsql.Physical.Plan
+  alias Efsql.Predicate
   alias Efsql.Types
 
   # transaction_too_old (retryable) and transaction_timed_out
   @too_long [1007, 1031]
-
-  @cmp_ops ~w[== > >= < <=]a
-  @cmp_results %{
-    ==: [:eq],
-    >: [:gt],
-    >=: [:gt, :eq],
-    <: [:lt],
-    <=: [:lt, :eq]
-  }
 
   def run(%Plan{access: access, ops: ops}) do
     Enum.reduce(ops, fetch(access), &apply_op/2)
@@ -67,9 +59,6 @@ defmodule Efsql.Executor do
       results -> Enum.reverse(results)
     end
   end
-
-  @doc "Whether `row` satisfies every one of `predicates`, with SQL NULL semantics."
-  def matches?(row, predicates), do: Enum.all?(predicates, &eval(&1, row))
 
   # -- access nodes --
 
@@ -145,7 +134,8 @@ defmodule Efsql.Executor do
 
   # -- operators --
 
-  defp apply_op({:filter, predicates}, rows), do: Enum.filter(rows, &matches?(&1, predicates))
+  defp apply_op({:filter, predicates}, rows),
+    do: Enum.filter(rows, &Predicate.matches?(&1, predicates))
 
   defp apply_op({:aggregate, group_by, aggregates}, rows) do
     Efsql.Aggregate.run(rows, group_by, aggregates)
@@ -159,46 +149,6 @@ defmodule Efsql.Executor do
 
   defp apply_op({:project, fields}, rows) do
     Enum.map(rows, &Map.take(&1, fields))
-  end
-
-  # -- predicate evaluation --
-
-  defp eval({:cmp, op, field, param}, row) when op in @cmp_ops,
-    do: on_value(row, field, &(Types.compare(&1, param) in Map.fetch!(@cmp_results, op)))
-
-  defp eval({:range, field, {lower_op, lower}, {upper_op, upper}}, row) do
-    eval({:cmp, lower_op, field, lower}, row) and eval({:cmp, upper_op, field, upper}, row)
-  end
-
-  defp eval({:in, field, values}, row),
-    do:
-      on_value(row, field, fn value -> Enum.any?(values, &(Types.compare(value, &1) == :eq)) end)
-
-  defp eval({:is_null, field}, row), do: Map.get(row, field) == nil
-  defp eval({:not_null, field}, row), do: Map.get(row, field) != nil
-
-  defp eval({:like, field, pattern}, row),
-    do: on_value(row, field, &Regex.match?(like_regex(pattern), &1))
-
-  defp eval({:not_like, field, pattern}, row),
-    do: on_value(row, field, &(not Regex.match?(like_regex(pattern), &1)))
-
-  # A NULL (nil or absent) field matches no comparison, LIKE or IN.
-  defp on_value(row, field, fun) do
-    case Map.get(row, field) do
-      nil -> false
-      value -> fun.(value)
-    end
-  end
-
-  defp like_regex(pattern) do
-    source =
-      pattern
-      |> Regex.escape()
-      |> String.replace("%", ".*")
-      |> String.replace("_", ".")
-
-    Regex.compile!("\\A" <> source <> "\\z", "s")
   end
 
   # -- sorting --

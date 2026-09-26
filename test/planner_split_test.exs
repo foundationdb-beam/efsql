@@ -1,7 +1,7 @@
 defmodule Efsql.PlannerSplitTest do
   use ExUnit.Case, async: true
 
-  alias Efsql.Executor
+  alias Efsql.Predicate
   alias Efsql.Logical
   alias Efsql.Planner
 
@@ -45,8 +45,8 @@ defmodule Efsql.PlannerSplitTest do
 
   test "tenant names are chosen with the usual predicate semantics" do
     preds = [{:like, :_tenant, "acme%"}]
-    assert Executor.matches?(%{_tenant: "acme-eu"}, preds)
-    refute Executor.matches?(%{_tenant: "globex"}, preds)
-    assert Executor.matches?(%{_tenant: "anything"}, [])
+    assert Predicate.matches?(%{_tenant: "acme-eu"}, preds)
+    refute Predicate.matches?(%{_tenant: "globex"}, preds)
+    assert Predicate.matches?(%{_tenant: "anything"}, [])
   end
 end

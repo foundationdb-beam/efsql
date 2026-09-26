@@ -26,7 +26,7 @@ defmodule Efsql.Planner do
   alias Efsql.Exception.Unsupported
   alias Efsql.Logical
   alias Efsql.Physical.Plan
-  alias Efsql.Types
+  alias Efsql.Predicate
   alias EctoFoundationDB.Layer.Metadata
 
   @pk_field :_
@@ -169,7 +169,7 @@ defmodule Efsql.Planner do
     if idx == nil do
       field == :id or Enum.any?(indexes, fn ix -> List.first(ix[:fields]) == field end)
     else
-      equal_fields = for {:cmp, :==, f, _v} <- pushed, do: f
+      equal_fields = for p <- pushed, Predicate.equality?(p), do: Predicate.field(p)
       List.first(idx[:fields] -- equal_fields) == field
     end
   end
@@ -204,7 +204,7 @@ defmodule Efsql.Planner do
     |> Enum.filter(fn {_idx, pushed, _rest} -> pushed != [] end)
     |> Enum.max_by(
       fn {_idx, pushed, _rest} ->
-        {length(pushed), Enum.count(pushed, &match?({:cmp, :==, _, _}, &1))}
+        {length(pushed), Enum.count(pushed, &Predicate.equality?/1)}
       end,
       fn -> {nil, [], pushables} end
     )
@@ -215,12 +215,12 @@ defmodule Efsql.Planner do
   defp match_index([], pushables, acc), do: {Enum.reverse(acc), pushables}
 
   defp match_index([field | rest_fields], pushables, acc) do
-    case take_pred(pushables, field, &match?({:cmp, :==, _, _}, &1)) do
+    case take_pred(pushables, field, &Predicate.equality?/1) do
       {eq, rest} when eq != nil ->
         match_index(rest_fields, rest, [eq | acc])
 
       {nil, _} ->
-        case take_pred(pushables, field, &range?/1) do
+        case take_pred(pushables, field, &Predicate.range?/1) do
           {range, rest} when range != nil -> {Enum.reverse([range | acc]), rest}
           {nil, _} -> {Enum.reverse(acc), pushables}
         end
@@ -228,11 +228,7 @@ defmodule Efsql.Planner do
   end
 
   defp take_pred(preds, field, pred_fun),
-    do: Logical.take_first(preds, &(Logical.predicate_field(&1) == field and pred_fun.(&1)))
-
-  defp range?({:range, _field, _lower, _upper}), do: true
-  defp range?({:cmp, op, _field, _value}) when op in ~w[> >= < <=]a, do: true
-  defp range?(_), do: false
+    do: Predicate.take_first(preds, &(Predicate.field(&1) == field and pred_fun.(&1)))
 
   defp load_indexes(%Logical.Select{tenant: tenant, source: source}),
     do: indexes(tenant, source)
@@ -244,26 +240,12 @@ defmodule Efsql.Planner do
 
   # -- classification --
 
+  # Grouped by how they can be served (see Predicate.pushdown/1), each
+  # group in its original order.
   defp classify(preds) do
-    Enum.reduce(preds, {[], [], [], []}, fn pred, {pks, ins, pushables, residuals} ->
-      case kind(pred) do
-        :pk -> {pks ++ [pred], ins, pushables, residuals}
-        :in -> {pks, ins ++ [pred], pushables, residuals}
-        :pushable -> {pks, ins, pushables ++ [pred], residuals}
-        :residual -> {pks, ins, pushables, residuals ++ [pred]}
-      end
-    end)
+    groups = Enum.group_by(preds, &Predicate.pushdown/1)
+    {groups[:key] || [], groups[:in] || [], groups[:index] || [], groups[:filter] || []}
   end
-
-  defp kind({:in, _field, _values}), do: :in
-  defp kind({:like, _field, _pattern}), do: :residual
-  defp kind({:not_like, _field, _pattern}), do: :residual
-  defp kind({:is_null, _field}), do: :residual
-  defp kind({:not_null, _field}), do: :residual
-  defp kind({:cmp, _op, @pk_field, _value}), do: :pk
-  defp kind({:range, @pk_field, _lower, _upper}), do: :pk
-  defp kind({:cmp, _op, _field, _value}), do: :pushable
-  defp kind({:range, _field, _lower, _upper}), do: :pushable
 
   # -- IN planning --
 
@@ -375,7 +357,7 @@ defmodule Efsql.Planner do
 
   defp takes(fields, residual, sort) do
     needed =
-      (Enum.map(residual, &Logical.predicate_field/1) ++ Enum.map(sort, fn {_dir, f} -> f end))
+      (Enum.map(residual, &Predicate.field/1) ++ Enum.map(sort, fn {_dir, f} -> f end))
       |> Enum.uniq()
 
     case needed -- fields do
@@ -385,7 +367,7 @@ defmodule Efsql.Planner do
   end
 
   defp ensure_residual_evaluable!(pred) do
-    if Logical.predicate_field(pred) == @pk_field do
+    if Predicate.field(pred) == @pk_field do
       raise Unsupported,
             "a constraint on the primary key '_' cannot be combined with this query shape"
     end
@@ -425,7 +407,12 @@ defmodule Efsql.Planner do
   defp put_wheres(%Ecto.Query{} = q, preds) do
     wheres =
       Enum.map(preds, fn pred ->
-        %Ecto.Query.BooleanExpr{op: :and, expr: pred_to_expr(pred), params: [], subqueries: []}
+        %Ecto.Query.BooleanExpr{
+          op: :and,
+          expr: Predicate.to_ecto(pred),
+          params: [],
+          subqueries: []
+        }
       end)
 
     %Ecto.Query{q | wheres: wheres}
@@ -434,7 +421,7 @@ defmodule Efsql.Planner do
   defp put_order(%Ecto.Query{} = q, []), do: q
 
   defp put_order(%Ecto.Query{} = q, order) do
-    expr = Enum.map(order, fn {dir, field} -> {dir, field_ref(field)} end)
+    expr = Enum.map(order, fn {dir, field} -> {dir, Predicate.field_ref(field)} end)
     %Ecto.Query{q | order_bys: [%Ecto.Query.ByExpr{expr: expr, params: [], subqueries: []}]}
   end
 
@@ -442,22 +429,5 @@ defmodule Efsql.Planner do
 
   defp put_limit(%Ecto.Query{} = q, n) do
     %Ecto.Query{q | limit: %Ecto.Query.LimitExpr{expr: n, with_ties: false, params: []}}
-  end
-
-  defp pred_to_expr({:cmp, op, field, value}) do
-    {op, [], [field_ref(field), Types.index_key(value)]}
-  end
-
-  defp pred_to_expr({:range, field, {lower_op, lower}, {upper_op, upper}}) do
-    {{lower_op, [], [field_ref(field), Types.index_key(lower)]},
-     {upper_op, [], [field_ref(field), Types.index_key(upper)]}}
-  end
-
-  defp pred_to_expr(pred) do
-    raise Unsupported, "predicate #{inspect(pred)} cannot be pushed to the adapter"
-  end
-
-  defp field_ref(field) do
-    {{:., [], [{:&, [], [0]}, field]}, [], []}
   end
 end

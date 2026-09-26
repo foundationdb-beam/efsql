@@ -75,13 +75,13 @@ defmodule Efsql.RewriteTest do
     end
   end
 
-  test "Logical.take_first takes the first match out, keeping the rest in order" do
+  test "Predicate.take_first takes the first match out, keeping the rest in order" do
     preds = [{:is_null, :a}, {:cmp, :>, :b, 1}, {:cmp, :>, :c, 2}]
     gt? = &match?({:cmp, :>, _, _}, &1)
 
-    assert Efsql.Logical.take_first(preds, gt?) ==
+    assert Efsql.Predicate.take_first(preds, gt?) ==
              {{:cmp, :>, :b, 1}, [{:is_null, :a}, {:cmp, :>, :c, 2}]}
 
-    assert Efsql.Logical.take_first(preds, fn _ -> false end) == {nil, preds}
+    assert Efsql.Predicate.take_first(preds, fn _ -> false end) == {nil, preds}
   end
 end

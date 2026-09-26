@@ -7,6 +7,7 @@ defmodule Efsql.Rewrite do
   """
 
   alias Efsql.Logical
+  alias Efsql.Predicate
 
   @lower_ops ~w[> >=]a
   @upper_ops ~w[< <=]a
@@ -49,7 +50,7 @@ defmodule Efsql.Rewrite do
   defp merge_ranges([pred | rest], acc), do: merge_ranges(rest, [pred | acc])
 
   defp take_bound(preds, field, ops) do
-    Logical.take_first(preds, fn
+    Predicate.take_first(preds, fn
       {:cmp, op, f, _v} -> op in ops and f == field
       _ -> false
     end)

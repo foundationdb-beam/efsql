@@ -49,7 +49,7 @@ defmodule Efsql.Parser do
   defp check_tenant_field(logical) do
     used =
       if(is_list(logical.projection), do: logical.projection, else: []) ++
-        Enum.map(logical.predicates, &Logical.predicate_field/1) ++
+        Enum.map(logical.predicates, &Efsql.Predicate.field/1) ++
         Enum.map(logical.order, &elem(&1, 1)) ++
         (logical.group_by || []) ++ Enum.map(logical.aggregates, &elem(&1, 2))
 

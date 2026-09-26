@@ -28,10 +28,10 @@ defmodule Efsql.Fanout do
   """
 
   alias Efsql.Exception.Unsupported
-  alias Efsql.Executor
   alias Efsql.Logical
   alias Efsql.Physical.Plan
   alias Efsql.Planner
+  alias Efsql.Predicate
 
   @default_max_tenants 100
   @default_batch_concurrency 4
@@ -70,12 +70,12 @@ defmodule Efsql.Fanout do
     end
 
     {tenant_preds, row_preds} =
-      Enum.split_with(logical.predicates, &(Logical.predicate_field(&1) == :_tenant))
+      Enum.split_with(logical.predicates, &(Predicate.field(&1) == :_tenant))
 
     names =
       storage_id
       |> list_tenants()
-      |> Enum.filter(&Executor.matches?(%{_tenant: &1}, tenant_preds))
+      |> Enum.filter(&Predicate.matches?(%{_tenant: &1}, tenant_preds))
       |> Enum.sort()
 
     if batch == nil and length(names) > max_tenants do
