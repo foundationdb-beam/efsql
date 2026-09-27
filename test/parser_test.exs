@@ -457,6 +457,54 @@ defmodule Efsql.ParserTest do
                )
     end
 
+    test "<> and != are inequalities, either way round" do
+      for condition <- ["age <> 40", "age != 40", "40 <> age"] do
+        assert %Logical.Select{predicates: [{:cmp, :!=, :age, 40}]} =
+                 parse("select id from t.users where #{condition};")
+      end
+    end
+
+    test "NOT IN, NOT BETWEEN, ILIKE and NOT ILIKE" do
+      assert %Logical.Select{
+               predicates: [
+                 {:not_in, :a, [1, 2]},
+                 {:not_range, :b, {:>=, 1}, {:<=, 5}},
+                 {:ilike, :c, "al%"},
+                 {:not_ilike, :d, "x_"}
+               ]
+             } =
+               parse(
+                 "select id from t.users where a not in (1, 2) and b not between 1 and 5 " <>
+                   "and c ilike 'al%' and d not ilike 'x_';"
+               )
+    end
+
+    test "NOT is pushed into the condition it negates" do
+      for {condition, predicates} <- [
+            {"not (a = 1)", [{:cmp, :!=, :a, 1}]},
+            {"not a <> 1", [{:cmp, :==, :a, 1}]},
+            {"not a < 1", [{:cmp, :>=, :a, 1}]},
+            {"not a >= 1", [{:cmp, :<, :a, 1}]},
+            {"not a > 1", [{:cmp, :<=, :a, 1}]},
+            {"not a <= 1", [{:cmp, :>, :a, 1}]},
+            {"not not a = 1", [{:cmp, :==, :a, 1}]},
+            {"not a in (1, 2)", [{:not_in, :a, [1, 2]}]},
+            {"not a not in (1, 2)", [{:in, :a, [1, 2]}]},
+            {"not (a between 1 and 5)", [{:not_range, :a, {:>=, 1}, {:<=, 5}}]},
+            {"not a like 'x%'", [{:not_like, :a, "x%"}]},
+            {"not a ilike 'x%'", [{:not_ilike, :a, "x%"}]},
+            {"not (a is null)", [{:not_null, :a}]},
+            {"not a isnull", [{:not_null, :a}]},
+            {"not (a = 1 or b like 'x%')", [{:cmp, :!=, :a, 1}, {:not_like, :b, "x%"}]},
+            {"c = 2 and not (a = 1 or not b = 3)",
+             [{:cmp, :==, :c, 2}, {:cmp, :!=, :a, 1}, {:cmp, :==, :b, 3}]}
+          ] do
+        assert %Logical.Select{predicates: ^predicates} =
+                 parse("select id from t.users where #{condition};"),
+               condition
+      end
+    end
+
     test "a value on the left is flipped" do
       assert %Logical.Select{predicates: [{:cmp, :>, :age, 40}, {:cmp, :==, :name, "x"}]} =
                parse("select id from t.users where 40 < age and 'x' = name;")
@@ -465,12 +513,9 @@ defmodule Efsql.ParserTest do
     test "unsupported conditions say what is unsupported" do
       for {condition, message} <- [
             {"a = 1 or b = 2", "OR is not supported"},
-            {"not a = 1", "NOT is not supported"},
-            {"a not in (1)", "NOT IN is not supported"},
-            {"a not between 1 and 2", "NOT BETWEEN is not supported"},
-            {"a ilike 'x'", "ILIKE is not supported"},
-            {"a <> 1", "<> and != are not supported"},
-            {"a != 1", "<> and != are not supported"},
+            {"not (a = 1 and b = 2)", "OR is not supported"},
+            {"not a", "the field a is not a condition; NOT needs a condition"},
+            {"a ilike 1", "an ILIKE pattern must be a string"},
             {"a = b", "comparing two fields"},
             {"1 = 1", "needs a field on one side"},
             {"'x' in ('x')", "IN needs a field on its left"},

@@ -14,7 +14,7 @@ defmodule Efsql.Complete do
 
   @statement_start ~w(select)
   @post_expr ~w(and group order limit)
-  @operators ~w(= > >= < <= like in between not is)
+  @operators ~w(= <> != > >= < <= like ilike in between not is)
 
   def complete(input, context) do
     {word_start, word} = current_word(input)

@@ -73,6 +73,15 @@ defmodule Efsql.RewriteTest do
     test "multi-value in is untouched" do
       assert [{:in, :name, ["a", "b"]}] = normalize([{:in, :name, ["a", "b"]}])
     end
+
+    test "single-value not in becomes an inequality" do
+      assert [{:cmp, :!=, :name, "a"}] = normalize([{:not_in, :name, ["a"]}])
+      assert [{:not_in, :name, ["a", "b"]}] = normalize([{:not_in, :name, ["a", "b"]}])
+    end
+
+    test "ilike is not a key range, whatever its prefix" do
+      assert [{:ilike, :name, "Al%"}] = normalize([{:ilike, :name, "Al%"}])
+    end
   end
 
   test "Predicate.take_first takes the first match out, keeping the rest in order" do

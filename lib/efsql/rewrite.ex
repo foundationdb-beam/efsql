@@ -123,11 +123,12 @@ defmodule Efsql.Rewrite do
     end
   end
 
-  # `field in (v)` is an equality.
+  # `field in (v)` is an equality, and `field not in (v)` an inequality.
   def pass_in_singleton(%Logical.Select{predicates: preds} = logical) do
     predicates =
       Enum.map(preds, fn
         {:in, field, [value]} -> {:cmp, :==, field, value}
+        {:not_in, field, [value]} -> {:cmp, :!=, field, value}
         pred -> pred
       end)
 

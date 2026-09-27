@@ -368,8 +368,10 @@ defmodule Efsql.Planner do
 
   defp ensure_residual_evaluable!(pred) do
     if Predicate.field(pred) == @pk_field do
+      # Rows carry the key under its field's name, not `_`, so a condition
+      # on `_` must be one the key range can serve.
       raise Unsupported,
-            "a constraint on the primary key '_' cannot be combined with this query shape"
+            "on the primary key '_', only =, <, <=, >, >=, BETWEEN and IN are supported"
     end
   end
 

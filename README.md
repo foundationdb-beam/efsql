@@ -171,8 +171,7 @@ so if you forget.
 
 Comments (`-- ...` and `/* ... */`) can go anywhere. A syntax error reports the
 line and column it was found at, and features efsql doesn't support (`OR`,
-`NOT`, `<>`, joins, `HAVING`, functions other than aggregates) are rejected by
-name.
+joins, `HAVING`, functions other than aggregates) are rejected by name.
 
 ### Storage IDs
 
@@ -275,6 +274,27 @@ select col_a, col_b from tenant_id.table_name where index_col between 'baz' and 
 ```
 
 Since efsql doesn't have access to the Ecto schema, type checking is loosened: a value must be written as the type the column stores. For datetime columns, use a [typed literal](#typed-literals).
+
+### Negation and ILIKE
+
+```sql
+select col_a from tenant_id.table_name where status <> 'paid';          -- or !=
+select col_a from tenant_id.table_name where status not in ('paid', 'refunded');
+select col_a from tenant_id.table_name where total not between 10 and 20;
+select col_a from tenant_id.table_name where name not like 'test%';
+select col_a from tenant_id.table_name where name ilike 'al%';           -- ignores case
+select col_a from tenant_id.table_name where not (status = 'paid' or total > 100);
+```
+
+`NOT` works on any condition, and is read as its opposite: `not (a < 1)` is
+`a >= 1`, `not (a = 1 or b = 2)` is `a <> 1 and b <> 2`. `not (a and b)`
+would need `OR`, which isn't supported.
+
+As in SQL, a NULL field matches no comparison, negated ones included: a
+row whose `status` is NULL matches neither `status = 'paid'` nor
+`status <> 'paid'`. Negations and `ILIKE` are checked on the rows read, as
+no index can serve them; the rest of the `WHERE` clause still narrows what
+is read.
 
 ### Filter by NULL
 
