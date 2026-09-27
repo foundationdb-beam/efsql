@@ -1,12 +1,11 @@
 defmodule Efsql.Executor do
   @moduledoc """
-  Executes an `Efsql.Physical.Plan`: pulls rows from the plan's access node,
-  then folds the operator pipeline over them.
-
-  SQL NULL semantics: a comparison, LIKE, or IN against a NULL (nil) field is
-  false — including NOT LIKE. IS NULL matches a nil or absent field. Sorting places NULLs last ascending and first
-  descending, matching PostgreSQL's defaults. Values compare with
-  `Efsql.Types.compare/2`, so datetimes order chronologically.
+  Executes an `Efsql.Physical.Plan`: reads rows through the plan's access
+  node and feeds them, as they arrive, through an `Efsql.Pipeline` of its
+  operators. A batched read across tenants arrives a batch at a time, and
+  stops early when the pipeline has all it needs (a `LIMIT` met).
+  Predicates evaluate with `Efsql.Predicate`'s SQL NULL semantics, and
+  `sort/2` orders NULLs as PostgreSQL does.
 
   A query across tenants (`{:fan_out, [{tenant_name, plan}]}`) reads every
   tenant in one FoundationDB transaction on the database: each tenant's
@@ -17,26 +16,30 @@ defmodule Efsql.Executor do
 
   alias Efsql.Exception.Unsupported
   alias Efsql.Physical.Plan
-  alias Efsql.Predicate
+  alias Efsql.Pipeline
   alias Efsql.Types
 
   # transaction_too_old (retryable) and transaction_timed_out
   @too_long [1007, 1031]
 
   def run(%Plan{access: access, ops: ops}) do
-    Enum.reduce(ops, fetch(access), &apply_op/2)
+    access
+    |> chunks()
+    |> Enum.reduce_while(Pipeline.new(ops), &Pipeline.feed(&2, &1))
+    |> Pipeline.finish()
   end
 
   @doc """
-  Maps `fun` over `items`, up to `max` at a time, each in a process of its
-  own, and returns the results in order. The first failure stops the rest
-  and is raised (or thrown, or exited) here as it was there, so a caller's
-  `rescue` sees the original exception rather than a linked process's
-  exit. With `max` 1 it all runs in the calling process.
+  A stream of `fun` over `items`, up to `max` at a time, each in a process
+  of its own, the results in order. Halting the stream stops the work not
+  yet done. A failure is raised (or thrown, or exited) in the consumer as
+  it was in its process, so a caller's `rescue` sees the original
+  exception rather than a linked process's exit. With `max` 1 it all runs
+  in the consuming process, one item at a time.
   """
-  def map_concurrently(items, 1, fun), do: Enum.map(items, fun)
+  def stream_concurrently(items, 1, fun), do: Stream.map(items, fun)
 
-  def map_concurrently(items, max, fun) do
+  def stream_concurrently(items, max, fun) do
     items
     |> Task.async_stream(
       fn item ->
@@ -50,21 +53,21 @@ defmodule Efsql.Executor do
       ordered: true,
       timeout: :infinity
     )
-    |> Enum.reduce_while([], fn
-      {:ok, {:ok, result}}, results -> {:cont, [result | results]}
-      {:ok, failed}, _results -> {:halt, failed}
+    |> Stream.map(fn
+      {:ok, {:ok, result}} -> result
+      {:ok, {:failed, kind, reason, stacktrace}} -> :erlang.raise(kind, reason, stacktrace)
     end)
-    |> case do
-      {:failed, kind, reason, stacktrace} -> :erlang.raise(kind, reason, stacktrace)
-      results -> Enum.reverse(results)
-    end
   end
 
   # -- access nodes --
 
-  # One transaction per batch, up to `concurrency` at a time.
-  defp fetch({:batches, batches, concurrency}),
-    do: batches |> map_concurrently(concurrency, &fetch/1) |> Enum.concat()
+  # The rows a plan reads, as the chunks they arrive in: one per batch, a
+  # transaction each, up to `concurrency` at a time, or else just one. A
+  # pipeline that halts stops the batches not yet read.
+  defp chunks({:batches, batches, concurrency}),
+    do: stream_concurrently(batches, concurrency, &fetch/1)
+
+  defp chunks(access), do: [fetch(access)]
 
   defp fetch({:fan_out, []}), do: []
 
@@ -95,7 +98,7 @@ defmodule Efsql.Executor do
 
         rows =
           plan.ops
-          |> Enum.reduce(List.flatten(mine), &apply_op/2)
+          |> Pipeline.run(List.flatten(mine))
           |> Enum.map(&Map.put(&1, :_tenant, name))
 
         {rows, rest}
@@ -130,25 +133,6 @@ defmodule Efsql.Executor do
 
   defp async_fetch({:all_from_source, query, options}) do
     Efsql.Repo.async_all_from_source(query, options)
-  end
-
-  # -- operators --
-
-  defp apply_op({:filter, predicates}, rows),
-    do: Enum.filter(rows, &Predicate.matches?(&1, predicates))
-
-  defp apply_op({:aggregate, group_by, aggregates}, rows) do
-    Efsql.Aggregate.run(rows, group_by, aggregates)
-  end
-
-  defp apply_op({:sort, order}, rows), do: sort(rows, order)
-
-  defp apply_op({:limit, n}, rows) do
-    Enum.take(rows, n)
-  end
-
-  defp apply_op({:project, fields}, rows) do
-    Enum.map(rows, &Map.take(&1, fields))
   end
 
   # -- sorting --
