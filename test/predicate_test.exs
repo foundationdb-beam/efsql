@@ -70,6 +70,24 @@ defmodule Efsql.PredicateTest do
     end
   end
 
+  test "OR holds when any branch does, a NULL failing only its own branch" do
+    assert holds?({:or, [[{:cmp, :==, :age, 1}], [{:cmp, :==, :name, "Alice"}]]})
+    refute holds?({:or, [[{:cmp, :==, :age, 1}], [{:cmp, :==, :name, "Bob"}]]})
+    assert holds?({:or, [[{:cmp, :==, :notes, "x"}], [{:cmp, :>, :age, 20}]]})
+    refute holds?({:or, [[{:cmp, :==, :notes, "x"}], [{:cmp, :!=, :notes, "x"}]]})
+
+    # a branch is AND-ed, and may hold another OR
+    refute holds?({:or, [[{:cmp, :==, :age, 30}, {:is_null, :name}], [{:is_null, :age}]]})
+
+    assert holds?(
+             {:or,
+              [
+                [{:is_null, :age}],
+                [{:cmp, :==, :age, 30}, {:or, [[{:is_null, :name}], [{:like, :name, "A%"}]]}]
+              ]}
+           )
+  end
+
   test "every predicate must hold" do
     assert Predicate.matches?(@row, [])
     refute Predicate.matches?(@row, [{:cmp, :==, :age, 30}, {:is_null, :name}])
@@ -91,7 +109,16 @@ defmodule Efsql.PredicateTest do
           {{:not_ilike, :l, "x"}, :l}
         ] do
       assert Predicate.field(predicate) == field
+      assert Predicate.fields(predicate) == [field]
     end
+
+    assert Predicate.fields(
+             {:or,
+              [
+                [{:cmp, :==, :a, 1}, {:is_null, :b}],
+                [{:or, [[{:in, :a, [2]}], [{:is_null, :c}]]}]
+              ]}
+           ) == [:a, :b, :c]
   end
 
   test "pushdown says how the planner can serve a predicate" do
@@ -112,7 +139,8 @@ defmodule Efsql.PredicateTest do
           {:cmp, :!=, :a, 1},
           {:cmp, :!=, :_, "k"},
           {:not_in, :a, [1]},
-          {:not_range, :a, {:>=, 1}, {:<=, 2}}
+          {:not_range, :a, {:>=, 1}, {:<=, 2}},
+          {:or, [[{:cmp, :==, :a, 1}], [{:cmp, :==, :b, 2}]]}
         ] do
       assert Predicate.pushdown(predicate) == :filter
     end

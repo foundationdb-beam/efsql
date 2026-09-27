@@ -13,7 +13,7 @@ defmodule Efsql.Complete do
   """
 
   @statement_start ~w(select)
-  @post_expr ~w(and group order limit)
+  @post_expr ~w(and or group order limit)
   @operators ~w(= <> != > >= < <= like ilike in between not is)
 
   def complete(input, context) do

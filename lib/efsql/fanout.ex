@@ -70,7 +70,14 @@ defmodule Efsql.Fanout do
     end
 
     {tenant_preds, row_preds} =
-      Enum.split_with(logical.predicates, &(Predicate.field(&1) == :_tenant))
+      Enum.split_with(logical.predicates, &(Predicate.fields(&1) == [:_tenant]))
+
+    # Each tenant's own reads check row_preds before its rows get _tenant.
+    for pred <- row_preds, :_tenant in Predicate.fields(pred) do
+      raise Unsupported,
+            "an OR can't mix _tenant with other fields; " <>
+              "put the condition on _tenant on its own (where _tenant = 'a' and (x = 1 or y = 2))"
+    end
 
     names =
       storage_id

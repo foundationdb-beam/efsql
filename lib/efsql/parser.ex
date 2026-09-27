@@ -2,7 +2,7 @@ defmodule Efsql.Parser do
   @moduledoc """
   SQL text to `Efsql.Logical.Select`: parses with `Efsql.SQL.Parser`, then
   translates the syntax tree. Syntax problems raise `Efsql.SQL.SyntaxError`;
-  valid SQL that efsql can't execute (`OR`, comparing two columns, ...)
+  valid SQL that efsql can't execute (comparing two columns, ...)
   raises `Efsql.Exception.Unsupported`.
 
   Purely a translation — normalization (range merging, LIKE rewriting)
@@ -53,7 +53,7 @@ defmodule Efsql.Parser do
   defp check_tenant_field(logical) do
     used =
       if(is_list(logical.projection), do: logical.projection, else: []) ++
-        Enum.map(logical.predicates, &Efsql.Predicate.field/1) ++
+        Enum.flat_map(logical.predicates, &Efsql.Predicate.fields/1) ++
         Enum.map(logical.order, &elem(&1, 1)) ++
         (logical.group_by || []) ++ Enum.map(logical.aggregates, &elem(&1, 2))
 
@@ -182,8 +182,7 @@ defmodule Efsql.Parser do
 
   # NOT is pushed down to the conditions it negates, each of which has an
   # exact opposite: NOT (a = 1) is a <> 1, NOT (a IN ...) is a NOT IN ...,
-  # and NOT (a OR b) is NOT a AND NOT b. NOT (a AND b) is NOT a OR NOT b,
-  # which needs OR.
+  # NOT (a OR b) is NOT a AND NOT b, and NOT (a AND b) is NOT a OR NOT b.
   defp push_not({:not, expr}), do: negate(expr)
 
   defp push_not({op, left, right}) when op in [:and, :or],
@@ -207,6 +206,9 @@ defmodule Efsql.Parser do
 
   defp conjuncts({:and, left, right}, acc), do: conjuncts(left, conjuncts(right, acc))
   defp conjuncts(expr, acc), do: [expr | acc]
+
+  defp disjuncts({:or, left, right}, acc), do: disjuncts(left, disjuncts(right, acc))
+  defp disjuncts(expr, acc), do: [expr | acc]
 
   defp predicate({:compare, op, {:column, _} = column, {:column, _}}),
     do:
@@ -255,8 +257,14 @@ defmodule Efsql.Parser do
   defp predicate({:is_null, {:column, field}, negated?}),
     do: {if(negated?, do: :not_null, else: :is_null), field(field)}
 
-  defp predicate({:or, _, _}),
-    do: raise(Unsupported, "OR is not supported (nor NOT over AND, which means OR)")
+  # `a OR b OR (c AND d)` is one OR of three branches, each an AND-ed list.
+  defp predicate({:or, _, _} = expr) do
+    branches =
+      for branch <- disjuncts(expr, []),
+          do: branch |> conjuncts([]) |> Enum.map(&predicate/1)
+
+    {:or, branches}
+  end
 
   defp predicate({:not, expr}),
     do: raise(Unsupported, "#{describe(expr)} is not a condition; NOT needs a condition")

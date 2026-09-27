@@ -55,6 +55,7 @@ defmodule Efsql.CompleteTest do
 
     {_, candidates} = Complete.complete("select id from users where name is null ", @context)
     assert "and" in candidates
+    assert "or" in candidates
   end
 
   test "order by offers fields" do

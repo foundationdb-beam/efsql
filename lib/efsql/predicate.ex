@@ -13,6 +13,9 @@ defmodule Efsql.Predicate do
       case-insensitive `:ilike` / `:not_ilike`
     * `{:in, field, values}` / `{:not_in, field, values}`
     * `{:is_null, field}` / `{:not_null, field}`
+    * `{:or, branches}` — true when any branch is, each branch itself an
+      AND-ed list of predicates (`a = 1 OR (b = 2 AND c = 3)` is
+      `{:or, [[a = 1], [b = 2, c = 3]]}`)
 
   SQL's `NOT` never reaches here: `Efsql.Parser` pushes it into the
   condition it negates (`NOT (a < 1)` is `a >= 1`).
@@ -33,6 +36,7 @@ defmodule Efsql.Predicate do
           | {:like | :not_like | :ilike | :not_ilike, field(), String.t()}
           | {:in | :not_in, field(), [term()]}
           | {:is_null | :not_null, field()}
+          | {:or, [[t()]]}
 
   @pk_field :_
 
@@ -45,13 +49,20 @@ defmodule Efsql.Predicate do
     <=: [:lt, :eq]
   }
 
-  @doc "The field a predicate constrains."
+  @doc "The field a predicate constrains; see `fields/1` for an OR."
   @spec field(t()) :: field()
   def field({:cmp, _op, field, _value}), do: field
   def field({kind, field, _lower, _upper}) when kind in [:range, :not_range], do: field
   def field({kind, field, _arg}) when kind in [:like, :not_like, :ilike, :not_ilike], do: field
   def field({kind, field, _values}) when kind in [:in, :not_in], do: field
   def field({kind, field}) when kind in [:is_null, :not_null], do: field
+
+  @doc "Every field a predicate reads, in order, without duplicates."
+  @spec fields(t()) :: [field()]
+  def fields({:or, branches}),
+    do: branches |> Enum.concat() |> Enum.flat_map(&fields/1) |> Enum.uniq()
+
+  def fields(predicate), do: [field(predicate)]
 
   # -- evaluation --
 
@@ -76,6 +87,10 @@ defmodule Efsql.Predicate do
 
   defp eval({:in, field, values}, row), do: on_value(row, field, &member?(&1, values))
   defp eval({:not_in, field, values}, row), do: on_value(row, field, &(not member?(&1, values)))
+
+  # A NULL makes a branch false, not the whole OR: `a = 1 OR b = 2` holds
+  # when a is NULL and b is 2.
+  defp eval({:or, branches}, row), do: Enum.any?(branches, &matches?(row, &1))
 
   defp eval({:is_null, field}, row), do: Map.get(row, field) == nil
   defp eval({:not_null, field}, row), do: Map.get(row, field) != nil
@@ -120,9 +135,10 @@ defmodule Efsql.Predicate do
     * `:in` - an `IN` list, read as one lookup per value when an index or
       the key can serve them
     * `:index` - an equality or range an index may serve
-    * `:filter` - only checked on the rows read: LIKE, IS NULL, and
+    * `:filter` - only checked on the rows read: LIKE, IS NULL, OR, and
       every negation (`<>`, NOT IN, NOT BETWEEN, NOT LIKE), which an index
-      can't serve
+      can't serve (an OR of equalities on one field becomes an IN first;
+      see `Efsql.Rewrite`)
   """
   @spec pushdown(t()) :: :key | :in | :index | :filter
   def pushdown({:cmp, :!=, _field, _value}), do: :filter

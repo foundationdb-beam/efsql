@@ -61,8 +61,10 @@ defmodule Efsql.Tui.Help do
          {:sql, "where status <> 'paid'        also !=, not in, not between"},
          {:sql, "where not (a = 1 or b = 2)"},
          {:sql, "where city = 'Osaka' and age > 40"},
+         {:sql, "where city = 'Osaka' or (city = 'Kyoto' and age > 40)"},
          "Literals: 'text', 42, 1.5, true, false, null.",
-         {:note, "or is not supported; conditions combine with and only"},
+         {:note, "and binds tighter than or; an or is checked on the rows read,"},
+         {:note, "except or-ed equalities on one field, read like in (...)"},
          {:note, "a null field matches no comparison, like in SQL"}
        ]},
       {"Ordering and limits",

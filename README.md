@@ -170,8 +170,7 @@ its case (`"CreatedAt"`). Most SQL keywords work as bare names, so columns like
 so if you forget.
 
 Comments (`-- ...` and `/* ... */`) can go anywhere. A syntax error reports the
-line and column it was found at, and features efsql doesn't support (`OR`,
-joins, `HAVING`, functions other than aggregates) are rejected by name.
+line and column it was found at, and features efsql doesn't support (joins, `HAVING`, functions other than aggregates) are rejected by name.
 
 ### Storage IDs
 
@@ -278,6 +277,26 @@ select col_a, col_b from tenant_id.table_name where index_col between 'baz' and 
 
 Since efsql doesn't have access to the Ecto schema, type checking is loosened: a value must be written as the type the column stores. For datetime columns, use a [typed literal](#typed-literals).
 
+### OR
+
+```sql
+select col_a from tenant_id.table_name where status = 'paid' or total > 100;
+select col_a from tenant_id.table_name where city = 'Osaka' and (age < 20 or age > 60);
+select col_a from tenant_id.table_name where status = 'paid' or status = 'shipped';
+```
+
+`AND` binds tighter than `OR`, so `a and b or c` is `(a and b) or c`. An
+`OR` is checked on the rows read, while the conditions `AND`-ed with it
+still narrow what is read: in the second query, an index on `city` serves
+`city = 'Osaka'`. `OR`-ed equalities on one field are an `IN`
+(`status in ('paid', 'shipped')`), read as one lookup per value when an
+index or the primary key serves the field. As in SQL, a NULL field fails
+only its own branch: a row whose `status` is NULL still matches
+`status = 'paid' or total > 100` when its total is over 100.
+
+In a query across tenants, an `OR` on `_tenant` alone picks the tenants,
+but one can't mix `_tenant` with other fields.
+
 ### Negation and ILIKE
 
 ```sql
@@ -290,8 +309,8 @@ select col_a from tenant_id.table_name where not (status = 'paid' or total > 100
 ```
 
 `NOT` works on any condition, and is read as its opposite: `not (a < 1)` is
-`a >= 1`, `not (a = 1 or b = 2)` is `a <> 1 and b <> 2`. `not (a and b)`
-would need `OR`, which isn't supported.
+`a >= 1`, `not (a = 1 or b = 2)` is `a <> 1 and b <> 2`, and `not (a and b)`
+is `not a or not b`.
 
 As in SQL, a NULL field matches no comparison, negated ones included: a
 row whose `status` is NULL matches neither `status = 'paid'` nor
