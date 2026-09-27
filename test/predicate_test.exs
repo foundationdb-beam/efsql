@@ -43,6 +43,33 @@ defmodule Efsql.PredicateTest do
     assert holds?({:not_null, :name})
   end
 
+  test "negations and ILIKE" do
+    assert holds?({:cmp, :!=, :age, 31})
+    refute holds?({:cmp, :!=, :age, 30})
+    assert holds?({:cmp, :!=, :price, Decimal.new("9.49")})
+    refute holds?({:cmp, :!=, :price, Decimal.new("9.500")})
+    assert holds?({:not_in, :age, [10, 20]})
+    refute holds?({:not_in, :age, [10, 30]})
+    assert holds?({:not_range, :age, {:>=, 31}, {:<=, 40}})
+    refute holds?({:not_range, :age, {:>=, 30}, {:<=, 40}})
+    assert holds?({:ilike, :name, "al%"})
+    assert holds?({:ilike, :name, "ALICE"})
+    refute holds?({:not_ilike, :name, "a_ice"})
+    assert Predicate.matches?(%{name: "Émile"}, [{:ilike, :name, "émile"}])
+  end
+
+  test "a NULL field matches no negation either" do
+    for predicate <- [
+          {:cmp, :!=, :notes, "x"},
+          {:not_in, :notes, ["x"]},
+          {:not_range, :notes, {:>=, "a"}, {:<=, "b"}},
+          {:ilike, :notes, "%"},
+          {:not_ilike, :notes, "x"}
+        ] do
+      refute holds?(predicate), inspect(predicate)
+    end
+  end
+
   test "every predicate must hold" do
     assert Predicate.matches?(@row, [])
     refute Predicate.matches?(@row, [{:cmp, :==, :age, 30}, {:is_null, :name}])
@@ -56,7 +83,12 @@ defmodule Efsql.PredicateTest do
           {{:not_like, :d, "x"}, :d},
           {{:in, :e, [1]}, :e},
           {{:is_null, :f}, :f},
-          {{:not_null, :g}, :g}
+          {{:not_null, :g}, :g},
+          {{:cmp, :!=, :h, 1}, :h},
+          {{:not_in, :i, [1]}, :i},
+          {{:not_range, :j, {:>=, 1}, {:<=, 2}}, :j},
+          {{:ilike, :k, "x"}, :k},
+          {{:not_ilike, :l, "x"}, :l}
         ] do
       assert Predicate.field(predicate) == field
     end
@@ -70,7 +102,18 @@ defmodule Efsql.PredicateTest do
     assert Predicate.pushdown({:cmp, :>, :age, 1}) == :index
     assert Predicate.pushdown({:range, :age, {:>, 1}, {:<, 2}}) == :index
 
-    for predicate <- [{:like, :a, "x"}, {:not_like, :a, "x"}, {:is_null, :a}, {:not_null, :a}] do
+    for predicate <- [
+          {:like, :a, "x"},
+          {:not_like, :a, "x"},
+          {:ilike, :a, "x"},
+          {:not_ilike, :a, "x"},
+          {:is_null, :a},
+          {:not_null, :a},
+          {:cmp, :!=, :a, 1},
+          {:cmp, :!=, :_, "k"},
+          {:not_in, :a, [1]},
+          {:not_range, :a, {:>=, 1}, {:<=, 2}}
+        ] do
       assert Predicate.pushdown(predicate) == :filter
     end
   end

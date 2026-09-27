@@ -14,7 +14,11 @@ defmodule Efsql.Parser do
   alias Efsql.SQL.AST
   alias Efsql.Types
 
-  @flipped %{:< => :>, :> => :<, :<= => :>=, :>= => :<=, := => :=}
+  @flipped %{:< => :>, :> => :<, :<= => :>=, :>= => :<=, := => :=, :<> => :<>}
+
+  # NOT of a comparison, which SQL's NULL rules keep exact: NOT (a < 1) and
+  # a >= 1 are both false when a is NULL.
+  @negated %{:= => :<>, :<> => :=, :< => :>=, :>= => :<, :> => :<=, :<= => :>}
   @max_versionstamp Bitwise.bsl(1, 96) - 1
 
   def sql_to_logical(sql) do
@@ -174,13 +178,35 @@ defmodule Efsql.Parser do
   # -- WHERE --
 
   defp predicates(nil), do: []
-  defp predicates(expr), do: expr |> conjuncts([]) |> Enum.map(&predicate/1)
+  defp predicates(expr), do: expr |> push_not() |> conjuncts([]) |> Enum.map(&predicate/1)
+
+  # NOT is pushed down to the conditions it negates, each of which has an
+  # exact opposite: NOT (a = 1) is a <> 1, NOT (a IN ...) is a NOT IN ...,
+  # and NOT (a OR b) is NOT a AND NOT b. NOT (a AND b) is NOT a OR NOT b,
+  # which needs OR.
+  defp push_not({:not, expr}), do: negate(expr)
+
+  defp push_not({op, left, right}) when op in [:and, :or],
+    do: {op, push_not(left), push_not(right)}
+
+  defp push_not(expr), do: expr
+
+  defp negate({:not, expr}), do: push_not(expr)
+  defp negate({:and, left, right}), do: {:or, negate(left), negate(right)}
+  defp negate({:or, left, right}), do: {:and, negate(left), negate(right)}
+  defp negate({:compare, op, left, right}), do: {:compare, Map.fetch!(@negated, op), left, right}
+
+  defp negate({:between, expr, low, high, negated?}),
+    do: {:between, expr, low, high, not negated?}
+
+  defp negate({kind, expr, values, negated?}) when kind in [:in, :like, :ilike],
+    do: {kind, expr, values, not negated?}
+
+  defp negate({:is_null, expr, negated?}), do: {:is_null, expr, not negated?}
+  defp negate(expr), do: {:not, expr}
 
   defp conjuncts({:and, left, right}, acc), do: conjuncts(left, conjuncts(right, acc))
   defp conjuncts(expr, acc), do: [expr | acc]
-
-  defp predicate({:compare, :<>, _left, _right}),
-    do: raise(Unsupported, "<> and != are not supported")
 
   defp predicate({:compare, op, {:column, _} = column, {:column, _}}),
     do:
@@ -193,20 +219,34 @@ defmodule Efsql.Parser do
   defp predicate({:compare, op, value, {:column, field}}),
     do: {:cmp, logical_op(Map.fetch!(@flipped, op)), field(field), value(value)}
 
-  defp predicate({:between, {:column, field}, low, high, false}),
-    do: {:range, field(field), {:>=, value(low)}, {:<=, value(high)}}
+  defp predicate({:between, {:column, field}, low, high, negated?}),
+    do:
+      {if(negated?, do: :not_range, else: :range), field(field), {:>=, value(low)},
+       {:<=, value(high)}}
 
-  defp predicate({:in, {:column, field}, values, false}),
-    do: {:in, field(field), Enum.map(values, &value/1)}
+  defp predicate({:in, {:column, field}, values, negated?}),
+    do: {if(negated?, do: :not_in, else: :in), field(field), Enum.map(values, &value/1)}
 
-  defp predicate({:like, {:column, field}, pattern, negated?}) do
+  defp predicate({like, {:column, field}, pattern, negated?}) when like in [:like, :ilike] do
     pattern =
       case value(pattern) do
-        pattern when is_binary(pattern) -> pattern
-        other -> raise Unsupported, "a LIKE pattern must be a string, got #{inspect(other)}"
+        pattern when is_binary(pattern) ->
+          pattern
+
+        other ->
+          what = if like == :ilike, do: "an ILIKE", else: "a LIKE"
+          raise Unsupported, "#{what} pattern must be a string, got #{inspect(other)}"
       end
 
-    {if(negated?, do: :not_like, else: :like), field(field), pattern}
+    kind =
+      case {like, negated?} do
+        {:like, false} -> :like
+        {:like, true} -> :not_like
+        {:ilike, false} -> :ilike
+        {:ilike, true} -> :not_ilike
+      end
+
+    {kind, field(field), pattern}
   end
 
   defp predicate({:is_null, {:column, "_"}, _negated?}),
@@ -215,16 +255,13 @@ defmodule Efsql.Parser do
   defp predicate({:is_null, {:column, field}, negated?}),
     do: {if(negated?, do: :not_null, else: :is_null), field(field)}
 
-  defp predicate({:or, _, _}), do: raise(Unsupported, "OR is not supported")
-  defp predicate({:not, _}), do: raise(Unsupported, "NOT is not supported")
+  defp predicate({:or, _, _}),
+    do: raise(Unsupported, "OR is not supported (nor NOT over AND, which means OR)")
 
-  defp predicate({:between, _, _, _, true}),
-    do: raise(Unsupported, "NOT BETWEEN is not supported")
+  defp predicate({:not, expr}),
+    do: raise(Unsupported, "#{describe(expr)} is not a condition; NOT needs a condition")
 
-  defp predicate({:in, _, _, true}), do: raise(Unsupported, "NOT IN is not supported")
-  defp predicate({:ilike, _, _, _}), do: raise(Unsupported, "ILIKE is not supported")
-
-  defp predicate({kind, _, _, _}) when kind in [:in, :like],
+  defp predicate({kind, _, _, _}) when kind in [:in, :like, :ilike],
     do: raise(Unsupported, "#{String.upcase(to_string(kind))} needs a field on its left")
 
   defp predicate({:between, _, _, _, _}),
@@ -239,6 +276,7 @@ defmodule Efsql.Parser do
     do: raise(Unsupported, "#{describe(expr)} is not a condition; compare it to something")
 
   defp logical_op(:=), do: :==
+  defp logical_op(:<>), do: :!=
   defp logical_op(op), do: op
 
   # Fields are atoms, which can't be longer than 255 characters.

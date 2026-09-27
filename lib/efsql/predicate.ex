@@ -5,12 +5,17 @@ defmodule Efsql.Predicate do
   the Ecto expression that pushes it to the adapter. A query's predicates
   are an implicitly AND-ed list of:
 
-    * `{:cmp, op, field, value}` — op in `:== :> :>= :< :<=`
+    * `{:cmp, op, field, value}` — op in `:== :!= :> :>= :< :<=`
     * `{:range, field, {lower_op, value}, {upper_op, value}}` — a two-sided
-      bound, `lower_op` in `:> :>=`, `upper_op` in `:< :<=`
-    * `{:like, field, pattern}` / `{:not_like, field, pattern}`
-    * `{:in, field, values}`
+      bound, `lower_op` in `:> :>=`, `upper_op` in `:< :<=`; `:not_range`
+      is its negation (`NOT BETWEEN`)
+    * `{:like, field, pattern}` / `{:not_like, field, pattern}`, and the
+      case-insensitive `:ilike` / `:not_ilike`
+    * `{:in, field, values}` / `{:not_in, field, values}`
     * `{:is_null, field}` / `{:not_null, field}`
+
+  SQL's `NOT` never reaches here: `Efsql.Parser` pushes it into the
+  condition it negates (`NOT (a < 1)` is `a >= 1`).
 
   The primary key is the pseudo-field `:_`.
 
@@ -23,16 +28,17 @@ defmodule Efsql.Predicate do
 
   @type field :: atom()
   @type t ::
-          {:cmp, :== | :> | :>= | :< | :<=, field(), term()}
-          | {:range, field(), {:> | :>=, term()}, {:< | :<=, term()}}
-          | {:like | :not_like, field(), String.t()}
-          | {:in, field(), [term()]}
+          {:cmp, :== | :!= | :> | :>= | :< | :<=, field(), term()}
+          | {:range | :not_range, field(), {:> | :>=, term()}, {:< | :<=, term()}}
+          | {:like | :not_like | :ilike | :not_ilike, field(), String.t()}
+          | {:in | :not_in, field(), [term()]}
           | {:is_null | :not_null, field()}
 
   @pk_field :_
 
   @cmp_results %{
     ==: [:eq],
+    !=: [:lt, :gt],
     >: [:gt],
     >=: [:gt, :eq],
     <: [:lt],
@@ -42,19 +48,18 @@ defmodule Efsql.Predicate do
   @doc "The field a predicate constrains."
   @spec field(t()) :: field()
   def field({:cmp, _op, field, _value}), do: field
-  def field({:range, field, _lower, _upper}), do: field
-  def field({:like, field, _pattern}), do: field
-  def field({:not_like, field, _pattern}), do: field
-  def field({:in, field, _values}), do: field
-  def field({:is_null, field}), do: field
-  def field({:not_null, field}), do: field
+  def field({kind, field, _lower, _upper}) when kind in [:range, :not_range], do: field
+  def field({kind, field, _arg}) when kind in [:like, :not_like, :ilike, :not_ilike], do: field
+  def field({kind, field, _values}) when kind in [:in, :not_in], do: field
+  def field({kind, field}) when kind in [:is_null, :not_null], do: field
 
   # -- evaluation --
 
   @doc """
   Whether `row` satisfies every one of `predicates`, with SQL NULL
   semantics: a NULL (nil or absent) field matches no comparison, LIKE or
-  IN, NOT LIKE included, and IS NULL matches it. Values compare with
+  IN, negated ones included (a NULL is neither `= 1` nor `<> 1`), and
+  IS NULL matches it. Values compare with
   `Efsql.Types.compare/2`.
   """
   @spec matches?(map(), [t()]) :: boolean()
@@ -66,18 +71,28 @@ defmodule Efsql.Predicate do
   defp eval({:range, field, {lower_op, lower}, {upper_op, upper}}, row),
     do: eval({:cmp, lower_op, field, lower}, row) and eval({:cmp, upper_op, field, upper}, row)
 
-  defp eval({:in, field, values}, row),
-    do:
-      on_value(row, field, fn value -> Enum.any?(values, &(Types.compare(value, &1) == :eq)) end)
+  defp eval({:not_range, field, lower, upper}, row),
+    do: on_value(row, field, fn _ -> not eval({:range, field, lower, upper}, row) end)
+
+  defp eval({:in, field, values}, row), do: on_value(row, field, &member?(&1, values))
+  defp eval({:not_in, field, values}, row), do: on_value(row, field, &(not member?(&1, values)))
 
   defp eval({:is_null, field}, row), do: Map.get(row, field) == nil
   defp eval({:not_null, field}, row), do: Map.get(row, field) != nil
 
   defp eval({:like, field, pattern}, row),
-    do: on_value(row, field, &Regex.match?(like_regex(pattern), &1))
+    do: on_value(row, field, &Regex.match?(like_regex(pattern, ""), &1))
 
   defp eval({:not_like, field, pattern}, row),
-    do: on_value(row, field, &(not Regex.match?(like_regex(pattern), &1)))
+    do: on_value(row, field, &(not Regex.match?(like_regex(pattern, ""), &1)))
+
+  defp eval({:ilike, field, pattern}, row),
+    do: on_value(row, field, &Regex.match?(like_regex(pattern, "iu"), &1))
+
+  defp eval({:not_ilike, field, pattern}, row),
+    do: on_value(row, field, &(not Regex.match?(like_regex(pattern, "iu"), &1)))
+
+  defp member?(value, values), do: Enum.any?(values, &(Types.compare(value, &1) == :eq))
 
   defp on_value(row, field, fun) do
     case Map.get(row, field) do
@@ -86,14 +101,14 @@ defmodule Efsql.Predicate do
     end
   end
 
-  defp like_regex(pattern) do
+  defp like_regex(pattern, flags) do
     source =
       pattern
       |> Regex.escape()
       |> String.replace("%", ".*")
       |> String.replace("_", ".")
 
-    Regex.compile!("\\A" <> source <> "\\z", "s")
+    Regex.compile!("\\A" <> source <> "\\z", "s" <> flags)
   end
 
   # -- planning --
@@ -105,9 +120,12 @@ defmodule Efsql.Predicate do
     * `:in` - an `IN` list, read as one lookup per value when an index or
       the key can serve them
     * `:index` - an equality or range an index may serve
-    * `:filter` - only checked on the rows read
+    * `:filter` - only checked on the rows read: LIKE, IS NULL, and
+      every negation (`<>`, NOT IN, NOT BETWEEN, NOT LIKE), which an index
+      can't serve
   """
   @spec pushdown(t()) :: :key | :in | :index | :filter
+  def pushdown({:cmp, :!=, _field, _value}), do: :filter
   def pushdown({:in, _field, _values}), do: :in
   def pushdown({:cmp, _op, @pk_field, _value}), do: :key
   def pushdown({:range, @pk_field, _lower, _upper}), do: :key

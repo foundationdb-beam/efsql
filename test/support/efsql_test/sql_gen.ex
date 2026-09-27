@@ -313,7 +313,7 @@ defmodule EfsqlTest.SQLGen do
   def mangle(sql, 0), do: sql
 
   def mangle(sql, n) do
-    chars = String.graphemes(sql)
+    chars = units(sql)
     at = Enum.random(0..length(chars))
     junk = Enum.random(@junk)
 
@@ -328,6 +328,13 @@ defmodule EfsqlTest.SQLGen do
 
     mangle(Enum.join(chars), n - 1)
   end
+
+  # A mangled query can hold invalid UTF-8 (a junk byte), which
+  # String.graphemes/1 raises on (in OTP 28's unicode_util), so it is cut
+  # into codepoints, each invalid byte a unit of its own.
+  defp units(<<c::utf8, rest::binary>>), do: [<<c::utf8>> | units(rest)]
+  defp units(<<byte, rest::binary>>), do: [<<byte>> | units(rest)]
+  defp units(<<>>), do: []
 
   @alphabet String.graphemes("selctfromwhandi*,.;()'\"=<>!:-+/%_ \n\t0123456789eé") ++
               ["select ", " from ", " where ", " and ", "--", "/*", "*/", "::", <<0xFF>>, <<0>>]
