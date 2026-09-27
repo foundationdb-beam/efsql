@@ -128,6 +128,17 @@ defmodule EfsqlTest.Integration.CrossTenant do
     end
   end
 
+  test "ORDER BY ... LIMIT and a plain LIMIT across batches", context do
+    batched = [tenant_batch: 1, max_tenants: 1, batch_concurrency: 2]
+
+    top = "select name from *.users where #{context[:both]} order by name desc limit 2;"
+    assert {_plan, [%{name: "Eve"}, %{name: "Dora"}], _} = Efsql.qall(top, batched)
+
+    # without ORDER BY any 2 rows will do, and reading stops once it has them
+    any = "select name from *.users where #{context[:both]} limit 2;"
+    assert {_plan, [_, _], _} = Efsql.qall(any, batched)
+  end
+
   test "a read too old for its transaction fails at once instead of retrying", context do
     sql = "select name from *.users where #{context[:both]};"
 

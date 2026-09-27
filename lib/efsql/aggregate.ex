@@ -1,7 +1,10 @@
 defmodule Efsql.Aggregate do
   @moduledoc """
-  `GROUP BY` and aggregates over pulled rows, for `Efsql.Executor`'s
-  `{:aggregate, group_by, aggregates}` operator.
+  `GROUP BY` and aggregates, for the `{:aggregate, group_by, aggregates}`
+  operator. It runs over rows as they arrive (`new/2`, `add/2`,
+  `finish/1`), keeping one small running total per group rather than the
+  rows themselves, so a query across many tenants can aggregate each batch
+  as it is read.
 
   Rows are grouped by the values of the `group_by` fields; equal values
   group together even when their terms differ (`Decimal` 1.0 and 1.00, or
@@ -12,9 +15,10 @@ defmodule Efsql.Aggregate do
 
   SQL semantics: `count(*)` counts rows, every other aggregate skips NULLs,
   and `sum`, `min`, `max` and `avg` of no values are NULL. `sum` and `avg`
-  take numbers and `Decimal`s, and are `Decimal` when any input is.
-  `min` and `max` order with `Efsql.Types.compare/2`, so they work on
-  strings and datetimes too. Groups come out ordered by their key.
+  take numbers and `Decimal`s, and become `Decimal` from the first
+  `Decimal` on. `min` and `max` order with `Efsql.Types.compare/2`, so
+  they work on strings and datetimes too. Groups come out ordered by their
+  key.
   """
 
   alias Efsql.Exception.Unsupported
@@ -22,78 +26,105 @@ defmodule Efsql.Aggregate do
 
   @type aggregate :: {name :: atom, :count | :sum | :min | :max | :avg, atom | :star}
 
-  @spec run([map], [atom], [aggregate]) :: [map]
-  def run(rows, group_by, aggregates) do
-    rows
-    |> Enum.group_by(fn row -> Enum.map(group_by, &Types.equality_key(Map.get(row, &1))) end)
-    |> ensure_one_group(group_by)
-    |> Enum.map(fn {_key, rows} ->
-      first = List.first(rows, %{})
-      group = Map.new(group_by, &{&1, Map.get(first, &1)})
+  defstruct group_by: [], aggregates: [], groups: %{}
 
-      Enum.reduce(aggregates, group, fn {name, function, arg}, acc ->
-        Map.put(acc, name, compute(function, arg, rows))
+  @opaque t :: %__MODULE__{}
+
+  @doc "All at once: `new/2`, `add/2` and `finish/1` over `rows`."
+  @spec run([map], [atom], [aggregate]) :: [map]
+  def run(rows, group_by, aggregates),
+    do: group_by |> new(aggregates) |> add(rows) |> finish()
+
+  @spec new([atom], [aggregate]) :: t()
+  def new(group_by, aggregates), do: %__MODULE__{group_by: group_by, aggregates: aggregates}
+
+  @doc "Adds rows to the running totals."
+  @spec add(t(), [map]) :: t()
+  def add(%__MODULE__{group_by: group_by, aggregates: aggregates} = state, rows) do
+    groups =
+      Enum.reduce(rows, state.groups, fn row, groups ->
+        key = Enum.map(group_by, &Types.equality_key(Map.get(row, &1)))
+
+        {values, accs} =
+          Map.get_lazy(groups, key, fn ->
+            {Map.new(group_by, &{&1, Map.get(row, &1)}), Enum.map(aggregates, &initial/1)}
+          end)
+
+        accs = Enum.zip_with(aggregates, accs, &accumulate(&1, &2, row))
+        Map.put(groups, key, {values, accs})
+      end)
+
+    %__MODULE__{state | groups: groups}
+  end
+
+  @doc "One row per group, ordered by the group fields."
+  @spec finish(t()) :: [map]
+  def finish(%__MODULE__{group_by: group_by, aggregates: aggregates, groups: groups}) do
+    # A whole-table aggregate answers even when no row matched.
+    groups =
+      if group_by == [] and groups == %{},
+        do: [{%{}, Enum.map(aggregates, &initial/1)}],
+        else: Map.values(groups)
+
+    groups
+    |> Enum.map(fn {values, accs} ->
+      aggregates
+      |> Enum.zip(accs)
+      |> Enum.reduce(values, fn {{name, function, _arg}, acc}, row ->
+        Map.put(row, name, result(function, acc))
       end)
     end)
     |> Efsql.Executor.sort(Enum.map(group_by, &{:asc, &1}))
   end
 
-  # A whole-table aggregate answers even when no row matched.
-  defp ensure_one_group(groups, []) when groups == %{}, do: [{[], []}]
-  defp ensure_one_group(groups, _group_by), do: Enum.to_list(groups)
+  # -- running totals --
 
-  # -- aggregates --
+  defp initial({_name, :count, _arg}), do: 0
+  defp initial({_name, :avg, _arg}), do: {nil, 0}
+  defp initial({_name, _function, _arg}), do: nil
 
-  defp compute(:count, :star, rows), do: length(rows)
-  defp compute(:count, field, rows), do: length(values(rows, field))
+  defp accumulate({_name, :count, :star}, n, _row), do: n + 1
 
-  defp compute(:min, field, rows), do: extreme(values(rows, field), :lt)
-  defp compute(:max, field, rows), do: extreme(values(rows, field), :gt)
-
-  defp compute(:sum, field, rows) do
-    case values(rows, field) do
-      [] -> nil
-      values -> sum(values, field)
+  defp accumulate({_name, function, field}, acc, row) do
+    case Map.get(row, field) do
+      nil -> acc
+      value -> step(function, field, acc, value)
     end
   end
 
-  defp compute(:avg, field, rows) do
-    case values(rows, field) do
-      [] ->
-        nil
+  defp step(:count, _field, n, _value), do: n + 1
+  defp step(:sum, field, total, value), do: add_number(total, value, field)
+  defp step(:avg, field, {total, n}, value), do: {add_number(total, value, field), n + 1}
+  defp step(:min, _field, best, value), do: better(best, value, :lt)
+  defp step(:max, _field, best, value), do: better(best, value, :gt)
 
-      values ->
-        case sum(values, field) do
-          %Decimal{} = total -> Decimal.div(total, length(values))
-          total -> total / length(values)
-        end
+  defp better(nil, value, _keep), do: value
+
+  defp better(best, value, keep),
+    do: if(Types.compare(value, best) == keep, do: value, else: best)
+
+  defp add_number(total, value, field) do
+    unless is_number(value) or is_struct(value, Decimal) do
+      raise Unsupported,
+            "sum and avg need numbers, but #{field} holds #{inspect(value, limit: 5)}"
+    end
+
+    cond do
+      total == nil ->
+        value
+
+      is_struct(total, Decimal) or is_struct(value, Decimal) ->
+        Decimal.add(decimal(total), decimal(value))
+
+      true ->
+        total + value
     end
   end
 
-  defp values(rows, field) do
-    rows |> Enum.map(&Map.get(&1, field)) |> Enum.reject(&is_nil/1)
-  end
-
-  defp extreme([], _keep), do: nil
-
-  defp extreme([first | rest], keep) do
-    Enum.reduce(rest, first, fn value, best ->
-      if Types.compare(value, best) == keep, do: value, else: best
-    end)
-  end
-
-  defp sum(values, field) do
-    Enum.each(values, fn value ->
-      unless is_number(value) or is_struct(value, Decimal) do
-        raise Unsupported,
-              "sum and avg need numbers, but #{field} holds #{inspect(value, limit: 5)}"
-      end
-    end)
-
-    if Enum.any?(values, &is_struct(&1, Decimal)),
-      do: values |> Enum.map(&decimal/1) |> Enum.reduce(&Decimal.add/2),
-      else: Enum.sum(values)
-  end
+  defp result(:avg, {nil, 0}), do: nil
+  defp result(:avg, {%Decimal{} = total, n}), do: Decimal.div(total, n)
+  defp result(:avg, {total, n}), do: total / n
+  defp result(_function, acc), do: acc
 
   defp decimal(%Decimal{} = d), do: d
   defp decimal(n) when is_integer(n), do: Decimal.new(n)
