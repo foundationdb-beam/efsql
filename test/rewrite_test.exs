@@ -84,6 +84,37 @@ defmodule Efsql.RewriteTest do
     end
   end
 
+  describe "OR" do
+    test "an OR of equalities and INs on one field is an IN" do
+      assert [{:in, :a, [1, 2, 3]}] =
+               normalize([{:or, [[{:cmp, :==, :a, 1}], [{:in, :a, [2, 3]}]]}])
+
+      assert [{:in, :_, ["k1", "k2"]}] =
+               normalize([{:or, [[{:cmp, :==, :_, "k1"}], [{:cmp, :==, :_, "k2"}]]}])
+    end
+
+    test "each value once, and one value is an equality" do
+      assert [{:in, :a, [1, 2]}] =
+               normalize([{:or, [[{:cmp, :==, :a, 1}], [{:in, :a, [1, 2]}]]}])
+
+      assert [{:cmp, :==, :a, 1}] =
+               normalize([{:or, [[{:cmp, :==, :a, 1}], [{:cmp, :==, :a, 1}]]}])
+
+      assert [{:in, :p, [%Decimal{}, 2]}] =
+               normalize([{:in, :p, [Decimal.new("1.0"), Decimal.new("1.00"), 2]}])
+    end
+
+    test "any other OR stays" do
+      for pred <- [
+            {:or, [[{:cmp, :==, :a, 1}], [{:cmp, :==, :b, 2}]]},
+            {:or, [[{:cmp, :==, :a, 1}], [{:cmp, :>, :a, 5}]]},
+            {:or, [[{:cmp, :==, :a, 1}], [{:cmp, :==, :a, 2}, {:is_null, :b}]]}
+          ] do
+        assert [^pred] = normalize([pred])
+      end
+    end
+  end
+
   test "Predicate.take_first takes the first match out, keeping the rest in order" do
     preds = [{:is_null, :a}, {:cmp, :>, :b, 1}, {:cmp, :>, :c, 2}]
     gt? = &match?({:cmp, :>, _, _}, &1)

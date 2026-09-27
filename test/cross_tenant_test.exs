@@ -94,6 +94,23 @@ defmodule EfsqlTest.Integration.CrossTenant do
     assert rows == [%{_tenant: context[:other], name: "Dora"}]
   end
 
+  test "an OR on _tenant chooses the tenants; mixed with other fields it is refused",
+       context do
+    either = "_tenant = '#{context[:tenant_id]}' or _tenant = '#{context[:other]}'"
+
+    assert {%Plan{access: {:fan_out, [_, _]}}, rows, _} =
+             Efsql.qall("select name from *.users where #{either} order by name;")
+
+    assert Enum.map(rows, & &1.name) == ["Alice", "Bob", "Charles", "Dora", "Eve"]
+
+    assert_raise Unsupported, ~r/an OR can't mix _tenant with other fields/, fn ->
+      Efsql.all(
+        "select name from *.users where #{context[:both]} and " <>
+          "(_tenant = '#{context[:other]}' or name = 'Alice');"
+      )
+    end
+  end
+
   test "more tenants than the limit is refused", context do
     assert_raise Unsupported, ~r/would read 2 tenants, more than the limit of 1/, fn ->
       Efsql.all("select name from *.users where #{context[:both]};", max_tenants: 1)

@@ -487,7 +487,7 @@ defmodule Efsql.Tui.AppTest do
     # the whole page is reachable by scrolling
     all = for s <- 0..40, do: frame_text(%{help | help_scroll: s})
     assert Enum.any?(all, &(&1 =~ "('u0006', *)"))
-    assert Enum.any?(all, &(&1 =~ "or is not supported"))
+    assert Enum.any?(all, &(&1 =~ "and binds tighter than or"))
   end
 
   test "ctrl-c cancels a running task before quitting" do

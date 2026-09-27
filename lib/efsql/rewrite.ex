@@ -2,12 +2,13 @@ defmodule Efsql.Rewrite do
   @moduledoc """
   Normalization passes over an `Efsql.Logical` query. Each pass is a pure
   `logical -> logical` function; `normalize/1` runs them in order. New
-  rewrite rules (OR to DNF, NOT pushdown, contradiction detection, ...) are
-  added here as further passes.
+  rewrite rules (contradiction detection, ...) are added here as further
+  passes. (NOT is pushed down earlier, by `Efsql.Parser`.)
   """
 
   alias Efsql.Logical
   alias Efsql.Predicate
+  alias Efsql.Types
 
   @lower_ops ~w[> >=]a
   @upper_ops ~w[< <=]a
@@ -16,6 +17,7 @@ defmodule Efsql.Rewrite do
     logical
     |> pass_merge_ranges()
     |> pass_like_prefix()
+    |> pass_or_in()
     |> pass_in_singleton()
   end
 
@@ -123,13 +125,43 @@ defmodule Efsql.Rewrite do
     end
   end
 
-  # `field in (v)` is an equality, and `field not in (v)` an inequality.
+  # `a = 1 OR a = 2 OR a IN (3, 4)` is `a IN (1, 2, 3, 4)`, which an index
+  # or the primary key serves as one lookup per value; any other OR is
+  # only checked on the rows read.
+  def pass_or_in(%Logical.Select{predicates: preds} = logical) do
+    %Logical.Select{logical | predicates: Enum.map(preds, &or_in/1)}
+  end
+
+  defp or_in({:or, branches} = pred) do
+    values = Enum.map(branches, &in_values/1)
+
+    case Enum.uniq_by(values, &elem(&1, 0)) do
+      [{field, _}] when field != nil -> {:in, field, Enum.flat_map(values, &elem(&1, 1))}
+      _ -> pred
+    end
+  end
+
+  defp or_in(pred), do: pred
+
+  defp in_values([{:cmp, :==, field, value}]), do: {field, [value]}
+  defp in_values([{:in, field, values}]), do: {field, values}
+  defp in_values(_branch), do: {nil, []}
+
+  # An IN list holds each value once, since each is read on its own (`a IN
+  # (1, 1)` would read a = 1 twice). Then `field in (v)` is an equality,
+  # and `field not in (v)` an inequality.
   def pass_in_singleton(%Logical.Select{predicates: preds} = logical) do
     predicates =
       Enum.map(preds, fn
-        {:in, field, [value]} -> {:cmp, :==, field, value}
-        {:not_in, field, [value]} -> {:cmp, :!=, field, value}
-        pred -> pred
+        {kind, field, values} when kind in [:in, :not_in] ->
+          case {kind, Enum.uniq_by(values, &Types.equality_key/1)} do
+            {:in, [value]} -> {:cmp, :==, field, value}
+            {:not_in, [value]} -> {:cmp, :!=, field, value}
+            {kind, values} -> {kind, field, values}
+          end
+
+        pred ->
+          pred
       end)
 
     %Logical.Select{logical | predicates: predicates}

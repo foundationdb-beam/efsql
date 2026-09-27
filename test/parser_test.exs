@@ -497,7 +497,35 @@ defmodule Efsql.ParserTest do
             {"not a isnull", [{:not_null, :a}]},
             {"not (a = 1 or b like 'x%')", [{:cmp, :!=, :a, 1}, {:not_like, :b, "x%"}]},
             {"c = 2 and not (a = 1 or not b = 3)",
-             [{:cmp, :==, :c, 2}, {:cmp, :!=, :a, 1}, {:cmp, :==, :b, 3}]}
+             [{:cmp, :==, :c, 2}, {:cmp, :!=, :a, 1}, {:cmp, :==, :b, 3}]},
+            {"not (a = 1 and b is null)", [{:or, [[{:cmp, :!=, :a, 1}], [{:not_null, :b}]]}]}
+          ] do
+        assert %Logical.Select{predicates: ^predicates} =
+                 parse("select id from t.users where #{condition};"),
+               condition
+      end
+    end
+
+    test "OR is one predicate of AND-ed branches" do
+      for {condition, predicates} <- [
+            {"a = 1 or b = 2", [{:or, [[{:cmp, :==, :a, 1}], [{:cmp, :==, :b, 2}]]}]},
+            {"a = 1 or b = 2 or c is null",
+             [{:or, [[{:cmp, :==, :a, 1}], [{:cmp, :==, :b, 2}], [{:is_null, :c}]]}]},
+            {"a = 1 or (b = 2 and c < 3)",
+             [{:or, [[{:cmp, :==, :a, 1}], [{:cmp, :==, :b, 2}, {:cmp, :<, :c, 3}]]}]},
+            # AND binds tighter than OR
+            {"a = 1 and b = 2 or c = 3",
+             [{:or, [[{:cmp, :==, :a, 1}, {:cmp, :==, :b, 2}], [{:cmp, :==, :c, 3}]]}]},
+            {"a = 1 and (b = 2 or c = 3)",
+             [{:cmp, :==, :a, 1}, {:or, [[{:cmp, :==, :b, 2}], [{:cmp, :==, :c, 3}]]}]},
+            {"a = 1 or (b = 2 and (c = 3 or d = 4))",
+             [
+               {:or,
+                [
+                  [{:cmp, :==, :a, 1}],
+                  [{:cmp, :==, :b, 2}, {:or, [[{:cmp, :==, :c, 3}], [{:cmp, :==, :d, 4}]]}]
+                ]}
+             ]}
           ] do
         assert %Logical.Select{predicates: ^predicates} =
                  parse("select id from t.users where #{condition};"),
@@ -512,8 +540,7 @@ defmodule Efsql.ParserTest do
 
     test "unsupported conditions say what is unsupported" do
       for {condition, message} <- [
-            {"a = 1 or b = 2", "OR is not supported"},
-            {"not (a = 1 and b = 2)", "OR is not supported"},
+            {"a = 1 or b", "the field b is not a condition"},
             {"not a", "the field a is not a condition; NOT needs a condition"},
             {"a ilike 1", "an ILIKE pattern must be a string"},
             {"a = b", "comparing two fields"},

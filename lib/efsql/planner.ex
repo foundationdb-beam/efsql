@@ -357,7 +357,7 @@ defmodule Efsql.Planner do
 
   defp takes(fields, residual, sort) do
     needed =
-      (Enum.map(residual, &Predicate.field/1) ++ Enum.map(sort, fn {_dir, f} -> f end))
+      (Enum.flat_map(residual, &Predicate.fields/1) ++ Enum.map(sort, fn {_dir, f} -> f end))
       |> Enum.uniq()
 
     case needed -- fields do
@@ -367,11 +367,12 @@ defmodule Efsql.Planner do
   end
 
   defp ensure_residual_evaluable!(pred) do
-    if Predicate.field(pred) == @pk_field do
+    if @pk_field in Predicate.fields(pred) do
       # Rows carry the key under its field's name, not `_`, so a condition
       # on `_` must be one the key range can serve.
       raise Unsupported,
-            "on the primary key '_', only =, <, <=, >, >=, BETWEEN and IN are supported"
+            "on the primary key '_', only =, <, <=, >, >=, BETWEEN and IN are supported " <>
+              "(and an OR of = and IN); use the primary key field name for anything else"
     end
   end
 
